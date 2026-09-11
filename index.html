@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Mossy Hollow</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='18' r='13' fill='%233c8f6b'/%3E%3Cpath d='M16 3c3 3 3 7 0 9-3-2-3-6 0-9Z' fill='%2358b98a'/%3E%3Ccircle cx='11' cy='17' r='2' fill='%231b1030'/%3E%3Ccircle cx='21' cy='17' r='2' fill='%231b1030'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet">
@@ -117,6 +118,20 @@
   #screen-start .btn-hit:focus-visible{
     outline: 3px solid var(--ember-coral); outline-offset: 3px;
   }
+  #screen-start .start-hint{
+    position:absolute; left:50%; top:4%; transform:translateX(-50%);
+    max-width: 92%;
+    text-align:center;
+    font-family:'Baloo 2', sans-serif; font-weight:700;
+    font-size: clamp(9px, 2.3vw, 12px);
+    letter-spacing: 0.02em;
+    color: var(--cream);
+    background: rgba(27,16,48,0.6);
+    border: 1px solid var(--panel-border);
+    border-radius: 999px;
+    padding: 6px 14px;
+    text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+  }
   .overlay h1{
     font-size: clamp(16px, 4.2vw, 28px);
     color: var(--firefly-gold);
@@ -165,16 +180,22 @@
   }
 
   /* ---- Touch controls ---- */
+  /* Lives outside #frame (see markup) so it never overlaps the playfield —
+     it used to sit absolutely over the bottom of the canvas, covering
+     ground-level tiles/coins on tall phone screens. Now it's a normal
+     block below the frame, using the vertical space letterboxing already
+     leaves unused on portrait viewports. */
   #touch-controls{
-    position:absolute; left:0; right:0; bottom:0;
     display:none;
+    width:100%;
     justify-content:space-between;
     align-items:flex-end;
-    padding: 0 16px 16px 16px;
-    z-index: 8;
+    padding: 8px 16px 4px;
     pointer-events:none;
   }
   @media (pointer: coarse), (max-width: 820px){
+    #stage{ flex-direction:column; gap:10px; }
+    #frame{ width:min(100%, calc((100vh - 32px - 106px) * 800 / 480)); }
     #touch-controls{ display:flex; }
   }
   .touch-cluster{ display:flex; gap:12px; pointer-events:auto; }
@@ -226,9 +247,10 @@
                             pits/platforms/coins/enemySpawns/goal/start.
     • Add an enemy type   → add a case to Enemy.draw() and a `kind` field.
     • Add a tile type     → extend isSolidTile()/drawTiles() together.
-    • Add power-ups/sound/multi-level progression, a title-screen preview,
-      and localStorage high scores — all intentionally left out of this
-      MVP (see the non-goals list in the build prompt).
+    • Power-ups and sound effects have shipped since this was written.
+      Add multi-level progression and localStorage high scores — still
+      intentionally left out of this MVP (see the non-goals list in the
+      build prompt).
 -->
 
 <div id="stage">
@@ -257,6 +279,7 @@
     <div class="overlay" id="screen-start">
       <h1 class="pixel sr-only">Mossy Hollow</h1>
       <p class="sr-only">Guide Sprig the moss-sprite through the hollow — hop on spikeshrooms from above, gather dewdrops, and reach the glowing portal. Move with the arrow keys or A/D, jump with Space, hold Shift to run.</p>
+      <p class="start-hint" aria-hidden="true">← → move &nbsp;·&nbsp; SPACE jump (hold: double) &nbsp;·&nbsp; SHIFT run &nbsp;·&nbsp; X ember &nbsp;·&nbsp; or use the on-screen buttons</p>
       <button class="btn-hit" id="btn-start" aria-label="Press Start to play Mossy Hollow"></button>
     </div>
 
@@ -280,16 +303,17 @@
       <button class="btn" id="btn-again">PLAY AGAIN</button>
     </div>
 
-    <div id="touch-controls">
-      <div class="touch-cluster">
-        <div class="touch-btn" id="btn-left" aria-hidden="true">◀</div>
-        <div class="touch-btn" id="btn-right" aria-hidden="true">▶</div>
-      </div>
-      <div class="touch-cluster">
-        <div class="touch-btn" id="btn-run" aria-hidden="true">RUN</div>
-        <div class="touch-btn" id="btn-ember" aria-hidden="true">EMBER</div>
-        <div class="touch-btn" id="jump-btn" aria-hidden="true">JUMP</div>
-      </div>
+  </div>
+
+  <div id="touch-controls">
+    <div class="touch-cluster">
+      <div class="touch-btn" id="btn-left" aria-hidden="true">◀</div>
+      <div class="touch-btn" id="btn-right" aria-hidden="true">▶</div>
+    </div>
+    <div class="touch-cluster">
+      <div class="touch-btn" id="btn-run" aria-hidden="true">RUN</div>
+      <div class="touch-btn" id="btn-ember" aria-hidden="true">EMBER</div>
+      <div class="touch-btn" id="jump-btn" aria-hidden="true">JUMP</div>
     </div>
   </div>
 </div>
@@ -519,6 +543,18 @@
   window.addEventListener("blur", () => {
     input.left = false; input.right = false; input.run = false; input.jumpHeld = false;
     jumpKeyDown = false; fireKeyDown = false;
+    simPaused = true;
+  });
+
+  // Backgrounding the tab used to leave the simulation running (physics,
+  // enemies, the level timer) while only input state got cleared above —
+  // returning to the tab could mean an unexpected fall/death. Pause the
+  // sim outright while hidden, and drop the stale elapsed time on return
+  // so it doesn't register as one huge dt frame.
+  window.addEventListener("focus", () => { simPaused = false; lastT = performance.now(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) simPaused = true;
+    else { simPaused = false; lastT = performance.now(); }
   });
 
   window.addEventListener("keydown", (e) => {
@@ -1712,14 +1748,14 @@
   }
 
   /* ============================== [LOOP] ================================== */
-  let lastT = 0, rafId = null;
+  let lastT = 0, rafId = null, simPaused = false;
   function loop(now){
     rafId = requestAnimationFrame(loop);
     let dt = (now - lastT) / 1000;
     lastT = now;
     if (dt > 0.05) dt = 0.05; // clamp huge gaps (tab refocus, etc.)
 
-    if (state === STATE.PLAYING){
+    if (state === STATE.PLAYING && !simPaused){
       elapsed += dt;
       updateTimer(dt);
       updatePlayer(dt);

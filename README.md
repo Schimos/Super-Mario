@@ -53,9 +53,10 @@ Search these section markers in the `<script>` block:
 - **Add an enemy type** — add a `kind` field and a matching case in `Enemy`'s draw code.
 - **Add a tile type** — extend `isSolidTile()` and `drawTiles()` together (they're the single source of truth for collision + rendering).
 
-Deliberately left out of this MVP: multiple levels/level-select, save/progress
-persistence, power-ups, sound/music, multiplayer, a level editor, and a
-backend. Good v2 candidates, in roughly that order.
+Power-ups (grow/fire forms) and sound effects have since been added. Still
+deliberately left out: multiple levels/level-select, save/progress
+persistence, background music, multiplayer, a level editor, and a backend.
+Good v2 candidates, in roughly that order.
 
 ## Why an original character?
 
