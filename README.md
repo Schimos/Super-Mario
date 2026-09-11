@@ -23,6 +23,30 @@ server required (though any static server works too, e.g. `python3 -m http.serve
 - **Jump**: `Space`, `↑`, or `W` (hold for a higher jump)
 - **Touch**: on-screen buttons appear automatically on touch/small-screen devices
 
+## Leaderboard
+
+Clearing the level lets a player submit their name and dewdrop score to a
+public leaderboard, backed by a Supabase table (`leaderboard`: `name`,
+`score`, `created_at`), and shows the current top 10.
+
+This still ships with zero build tooling: `index.html` embeds the Supabase
+project URL directly (not a secret) plus a literal placeholder,
+`__SUPABASE_ANON_KEY__`, for the anon/publishable key. The deploy workflows
+(`deploy-pages.yml`, `deploy-ssh.yml`) substitute that placeholder with the
+real key from the `SUPABASE_API_KEY` repository secret at deploy time, so
+the key never has to sit in source control. Locally, or if that secret
+isn't set, the placeholder is left as-is, the Supabase client is never
+created, and the leaderboard UI quietly disables itself instead of
+erroring.
+
+`SUPABASE_API_KEY` must be Supabase's public anon/publishable key (the one
+protected by Row Level Security), never a `service_role` secret key — it
+ends up in every player's browser. Row Level Security on the `leaderboard`
+table allows anyone to read the top scores and insert a new one, with CHECK
+constraints bounding name length and score range; there's no server-side
+proof that a submitted score was actually earned in-game, so treat this as
+a casual/for-fun leaderboard rather than a tamper-proof one.
+
 ## Project structure
 
 ```
@@ -46,6 +70,7 @@ Search these section markers in the `<script>` block:
 | `[CAMERA]`     | side-scroll follow + world culling |
 | `[RENDER]`     | background parallax, tiles, entities, particles |
 | `[GAME]`       | state machine (START → PLAYING → GAMEOVER / WIN) + main loop |
+| `[LEADERBOARD]`| Supabase client + submit/fetch/render for the win-screen leaderboard |
 
 ## Extending it
 
@@ -54,8 +79,8 @@ Search these section markers in the `<script>` block:
 - **Add a tile type** — extend `isSolidTile()` and `drawTiles()` together (they're the single source of truth for collision + rendering).
 
 Deliberately left out of this MVP: multiple levels/level-select, save/progress
-persistence, power-ups, sound/music, multiplayer, a level editor, and a
-backend. Good v2 candidates, in roughly that order.
+persistence, power-ups, sound/music, multiplayer, and a level editor. Good
+v2 candidates, in roughly that order.
 
 ## Why an original character?
 

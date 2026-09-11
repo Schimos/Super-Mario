@@ -156,6 +156,53 @@
     display:flex; gap:14px; flex-wrap:wrap; justify-content:center;
     font-size: 12px; color: var(--cream); opacity:0.75;
   }
+
+  /* ---- Leaderboard (win screen) ---- */
+  .score-form{
+    display:flex; gap:10px; flex-wrap:wrap; justify-content:center; align-items:center;
+  }
+  .score-input{
+    font-family:'Baloo 2', sans-serif; font-weight:700;
+    font-size: 14px; color: var(--ink-deep);
+    background: var(--cream);
+    border: 2px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    width: 180px;
+    max-width: 45vw;
+  }
+  .score-input:focus-visible{ outline: 3px solid var(--ember-coral); outline-offset: 2px; }
+  .score-status{
+    min-height: 1.2em; margin:0;
+    font-size: 12px; color: var(--cream); opacity:0.85;
+  }
+  .leaderboard{
+    width: min(360px, 80vw);
+    background: rgba(27,16,48,0.55);
+    border: 2px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .leaderboard.hidden{ display:none; }
+  .leaderboard-title{
+    font-size: 11px; color: var(--firefly-gold); margin: 0 0 8px;
+  }
+  .leaderboard-list{
+    list-style:none; margin:0; padding:0;
+    display:flex; flex-direction:column; gap:4px;
+    max-height: 160px; overflow-y:auto;
+    font-size: 13px; font-weight:700;
+  }
+  .leaderboard-list li{
+    display:flex; gap:10px; align-items:baseline;
+    padding: 2px 4px; border-radius:4px;
+  }
+  .leaderboard-list li.mine{ background: rgba(255,209,102,0.18); }
+  .leaderboard-list .rank{ color: var(--firefly-gold); width:1.6em; flex:0 0 auto; }
+  .leaderboard-list .lb-name{
+    flex:1 1 auto; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .leaderboard-list .lb-score{ font-variant-numeric: tabular-nums; }
   kbd{
     font-family:'Baloo 2', sans-serif; font-weight:700;
     background: rgba(255,247,232,0.12);
@@ -277,6 +324,20 @@
         <span>TIME <b id="win-time">0.0s</b></span>
         <span>LIVES LEFT <b id="win-lives">3</b></span>
       </div>
+
+      <form id="score-form" class="score-form">
+        <label class="sr-only" for="score-name">Your name</label>
+        <input id="score-name" class="score-input" type="text" maxlength="16"
+               placeholder="YOUR NAME" autocomplete="off" />
+        <button class="btn" type="submit" id="btn-submit-score">SUBMIT SCORE</button>
+      </form>
+      <p id="score-status" class="score-status" role="status" aria-live="polite"></p>
+
+      <div id="leaderboard" class="leaderboard hidden">
+        <h2 class="pixel leaderboard-title">TOP DEWDROPS</h2>
+        <ol id="leaderboard-list" class="leaderboard-list"></ol>
+      </div>
+
       <button class="btn" id="btn-again">PLAY AGAIN</button>
     </div>
 
@@ -294,6 +355,14 @@
   </div>
 </div>
 
+<!--
+  Supabase client for the leaderboard. The anon/publishable key below is
+  swapped in at deploy time (see .github/workflows/deploy-pages.yml) from
+  the SUPABASE_API_KEY repository secret, so it never sits in source
+  control — it's still a public, RLS-restricted key, just not one we want
+  hardcoded and forgotten if it's ever rotated.
+-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 (() => {
   "use strict";
@@ -408,6 +477,71 @@
     audio.volume = volume;
     const p = audio.play();
     return p && p.catch ? p.catch(() => {}) : Promise.resolve();
+  }
+
+  /* ============================== [LEADERBOARD] ===========================
+     A public leaderboard backed by Supabase (table: leaderboard, columns:
+     name text, score int). SUPABASE_ANON_KEY is a build-time placeholder —
+     deploy-pages.yml swaps it for the real anon/publishable key from the
+     SUPABASE_API_KEY repo secret. Locally (or if the swap didn't happen)
+     the placeholder is left in place, the client is never created, and the
+     leaderboard UI quietly disables itself instead of erroring.          */
+  const SUPABASE_URL = "https://imrkxwipmhhovyogbwub.supabase.co";
+  const SUPABASE_ANON_KEY = "__SUPABASE_ANON_KEY__";
+  const LEADERBOARD_TABLE = "leaderboard";
+  const LEADERBOARD_MAX_NAME_LEN = 16;
+  const LEADERBOARD_TOP_N = 10;
+
+  const supabaseClient =
+    (window.supabase && !SUPABASE_ANON_KEY.startsWith("__"))
+      ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+      : null;
+
+  async function submitScore(name, points){
+    if (!supabaseClient) throw new Error("leaderboard unavailable");
+    const { error } = await supabaseClient
+      .from(LEADERBOARD_TABLE)
+      .insert({ name: name.slice(0, LEADERBOARD_MAX_NAME_LEN), score: Math.max(0, Math.round(points)) });
+    if (error) throw error;
+  }
+
+  async function fetchTopScores(){
+    if (!supabaseClient) return null;
+    const { data, error } = await supabaseClient
+      .from(LEADERBOARD_TABLE)
+      .select("name,score")
+      .order("score", { ascending: false })
+      .order("created_at", { ascending: true })
+      .limit(LEADERBOARD_TOP_N);
+    if (error) throw error;
+    return data;
+  }
+
+  function renderLeaderboard(rows, mineName){
+    const list = document.getElementById("leaderboard-list");
+    list.innerHTML = "";
+    rows.forEach((row, i) => {
+      const li = document.createElement("li");
+      if (mineName && row.name === mineName) li.classList.add("mine");
+      const rank = document.createElement("span");
+      rank.className = "rank"; rank.textContent = (i + 1) + ".";
+      const name = document.createElement("span");
+      name.className = "lb-name"; name.textContent = row.name;
+      const points = document.createElement("span");
+      points.className = "lb-score"; points.textContent = row.score;
+      li.append(rank, name, points);
+      list.appendChild(li);
+    });
+    show("leaderboard", rows.length > 0);
+  }
+
+  async function refreshLeaderboard(mineName){
+    try {
+      const rows = await fetchTopScores();
+      if (rows) renderLeaderboard(rows, mineName);
+    } catch (e) {
+      console.warn("Leaderboard fetch failed:", e);
+    }
   }
 
   /* ============================== [LEVEL] ================================
@@ -792,6 +926,20 @@
     document.getElementById("win-lives").textContent = lives;
     show("screen-win", true);
     playSound("victory");
+    resetScoreForm();
+    refreshLeaderboard(null);
+  }
+
+  function resetScoreForm(){
+    const form = document.getElementById("score-form");
+    const input = document.getElementById("score-name");
+    const status = document.getElementById("score-status");
+    form.hidden = false;
+    form.querySelector("button").disabled = false;
+    input.disabled = false;
+    input.value = "";
+    status.textContent = supabaseClient ? "" : "Leaderboard is unavailable right now.";
+    show("leaderboard", false);
   }
 
   /* ============================== [PHYSICS] =============================== */
@@ -1752,6 +1900,28 @@
   document.getElementById("btn-start").addEventListener("click", startGame);
   document.getElementById("btn-retry").addEventListener("click", startGame);
   document.getElementById("btn-again").addEventListener("click", startGame);
+
+  document.getElementById("score-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const input = document.getElementById("score-name");
+    const status = document.getElementById("score-status");
+    const submitBtn = form.querySelector("button");
+    const name = input.value.trim();
+    if (!name) { status.textContent = "Enter a name first."; return; }
+
+    input.disabled = true; submitBtn.disabled = true;
+    status.textContent = "Submitting…";
+    try {
+      await submitScore(name, score);
+      status.textContent = "Score submitted!";
+      await refreshLeaderboard(name);
+    } catch (err) {
+      console.warn("Score submit failed:", err);
+      status.textContent = "Couldn't submit score — try again later.";
+      input.disabled = false; submitBtn.disabled = false;
+    }
+  });
 
   // draw one idle frame behind the start screen
   buildLevel();
