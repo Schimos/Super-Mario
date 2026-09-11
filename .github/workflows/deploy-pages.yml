@@ -26,6 +26,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Inject Supabase anon key
+        # index.html ships with the literal placeholder __SUPABASE_ANON_KEY__
+        # (see the [LEADERBOARD] section of its <script>) so the real key
+        # never has to live in source control. It's the public anon key,
+        # safe for the browser (protected by Supabase Row Level Security),
+        # just not one we want hardcoded and forgotten if it's ever rotated.
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os
+
+          key = os.environ.get("SUPABASE_ANON_KEY", "")
+          if not key:
+              print("::warning::SUPABASE_API_KEY secret is not set; leaderboard will be disabled.")
+          else:
+              with open("index.html", "r", encoding="utf-8") as f:
+                  content = f.read()
+              content = content.replace("__SUPABASE_ANON_KEY__", key)
+              with open("index.html", "w", encoding="utf-8") as f:
+                  f.write(content)
+          PY
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
