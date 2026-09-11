@@ -843,27 +843,53 @@
     ctx.scale(p.facing, 1);
     ctx.scale(1/p.squash, p.squash);
 
+    // The drawn silhouette is scaled up from the physics hitbox (p.w/p.h)
+    // to read as a bold, big-headed platformer hero at a glance; feet stay
+    // pinned to the true collision box (origin above) so jump/landing feel
+    // and level tuning are untouched — only the sprite grows around them.
+    const VH = p.h * 1.55;         // total visual height, feet to head-top
+    const VW = p.w * 1.3;          // total visual width
+    const headH = VH * 0.52;       // oversized head = dominant silhouette
+    const legH = 9;
+    const bodyTop = -VH + headH * 0.92;
+
     // legs
     const stride = Math.sin(p.animT) * (p.onGround ? 7 : 0);
     ctx.fillStyle = COLORS.playerOutline;
-    ctx.fillRect(-9 + stride*0.3, -8, 7, 8);
-    ctx.fillRect(2 - stride*0.3, -8, 7, 8);
+    ctx.fillRect(-VW*0.34 + stride*0.3, -legH, VW*0.26, legH);
+    ctx.fillRect(VW*0.08 - stride*0.3, -legH, VW*0.26, legH);
 
-    // body
+    // lower body (narrower than the head, classic top-heavy hero proportion)
     ctx.fillStyle = COLORS.player;
-    roundRect(ctx, -13, -p.h, 26, p.h-4, 10); ctx.fill();
-    // belly
+    ctx.lineWidth = 2.5; ctx.strokeStyle = COLORS.playerOutline;
+    roundRect(ctx, -VW*0.32, bodyTop, VW*0.64, -legH - bodyTop, 8);
+    ctx.fill(); ctx.stroke();
+
+    // head (large and round for silhouette readability from a distance)
+    roundRect(ctx, -VW/2, -VH, VW, headH, VW*0.42);
+    ctx.fill(); ctx.stroke();
+
+    // belly / chest patch
     ctx.fillStyle = COLORS.playerBelly;
-    roundRect(ctx, -7, -p.h+10, 14, p.h-16, 6); ctx.fill();
-    // eye
+    roundRect(ctx, -VW*0.2, bodyTop+3, VW*0.4, (-legH - bodyTop)-6, 5); ctx.fill();
+
+    // two large expressive eyes
+    const eyeY = -VH + headH*0.56;
+    ctx.fillStyle = COLORS.playerBelly;
+    ctx.beginPath(); ctx.ellipse(VW*0.12, eyeY, 5.5, 6.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-VW*0.14, eyeY, 4, 5, 0, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = "#1b1030";
-    ctx.beginPath(); ctx.arc(6, -p.h+11, 2.6, 0, Math.PI*2); ctx.fill();
-    // leaf cap
+    ctx.beginPath(); ctx.arc(VW*0.14, eyeY, 2.6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-VW*0.13, eyeY, 1.9, 0, Math.PI*2); ctx.fill();
+
+    // leaf cap — the species' signature silhouette crest, sized to the bigger head
     ctx.fillStyle = COLORS.moss;
+    ctx.strokeStyle = COLORS.mossDark; ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(-4, -p.h+2); ctx.quadraticCurveTo(2, -p.h-12, 12, -p.h-6);
-    ctx.quadraticCurveTo(6, -p.h+4, -4, -p.h+2);
-    ctx.closePath(); ctx.fill();
+    ctx.moveTo(-VW*0.16, -VH+3);
+    ctx.quadraticCurveTo(VW*0.02, -VH-18, VW*0.4, -VH-8);
+    ctx.quadraticCurveTo(VW*0.16, -VH+7, -VW*0.16, -VH+3);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
 
     ctx.restore();
   }
