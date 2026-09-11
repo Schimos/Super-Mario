@@ -624,6 +624,16 @@
         e.deathT += dt;
         continue;
       }
+      // Ledge check: turn around before walking onto empty air. The x1/x2
+      // patrol clamps below are hand-fitted to avoid the current level's
+      // pits, but this makes that safe-by-construction instead of
+      // safe-by-coincidence for any level added later.
+      const dir = Math.sign(e.vx);
+      if (dir !== 0){
+        const footAheadX = dir > 0 ? e.x + e.w + 4 : e.x - 4;
+        const tx = Math.floor(footAheadX / TILE);
+        if (!isSolidTile(tx, LEVEL.groundRow)) e.vx = -e.vx;
+      }
       e.x += e.vx * dt;
       if (e.x < e.x1){ e.x = e.x1; e.vx = Math.abs(e.vx); }
       if (e.x > e.x2){ e.x = e.x2; e.vx = -Math.abs(e.vx); }
@@ -916,12 +926,6 @@
   // draw one idle frame behind the start screen
   buildLevel();
   render();
-
-  // ---- optional hot-reload hooks for the hosting environment ----
-  const boot = (data) => { /* no persisted state to restore for this MVP */ };
-  if (window.claude && window.claude.hot){
-    window.claude.hot.ready ? window.claude.hot.ready(boot) : boot(window.claude.hot.data || {});
-  }
 })();
 </script>
 </body>
