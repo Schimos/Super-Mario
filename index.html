@@ -91,15 +91,41 @@
   /* ---- Overlays ---- */
   .overlay{
     position:absolute; inset:0;
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    display:flex;
+    overflow-y:auto;
+    touch-action:pan-y; /* html,body sets touch-action:none for gameplay; opt this back in so a real phone can swipe-scroll a tall overlay */
     text-align:center;
     background: linear-gradient(180deg, rgba(27,16,48,0.88), rgba(27,16,48,0.96));
     padding: 24px;
-    gap: 16px;
     z-index: 10;
     transition: opacity 0.25s ease;
   }
   .overlay.hidden{ display:none; }
+  /* margin:auto centers .overlay-inner vertically when it fits, but — unlike
+     justify-content:center on the scroll container itself — collapses to 0
+     and lets the overlay scroll instead of clipping top/bottom when content
+     (e.g. the win screen's name-entry form + leaderboard) is taller than
+     the frame, which happens on short/mobile viewports. */
+  .overlay-inner{
+    margin: auto;
+    max-width: 100%;
+    display:flex; flex-direction:column; align-items:center;
+    gap: 16px;
+  }
+  /* Pinned to the (non-scrolling) frame edge, not the scrolling content —
+     tells a player on a short/mobile viewport there's more below to see
+     (e.g. Play Again) without them having to discover that by accident. */
+  .scroll-hint{
+    position:absolute; left: calc(50% - 14px); bottom:8px;
+    width:28px; height:28px; border-radius:50%;
+    background: rgba(255,209,102,0.9); color:var(--ink-deep);
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:800; pointer-events:none; z-index:11;
+    opacity:0; transition:opacity 0.2s ease;
+    animation: scroll-hint-bob 1.4s ease-in-out infinite;
+  }
+  .scroll-hint.visible{ opacity:1; }
+  @keyframes scroll-hint-bob{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(5px); } }
 
   /* ---- Start screen (arcade marquee artwork) ---- */
   #screen-start{
@@ -211,6 +237,9 @@
   .leaderboard-list li{
     display:flex; gap:10px; align-items:baseline;
     padding: 2px 4px; border-radius:4px;
+  }
+  .leaderboard-list li.lb-empty{
+    justify-content:center; opacity:0.75; font-weight:600; padding: 6px 4px;
   }
   .leaderboard-list li.mine{ background: rgba(255,209,102,0.18); }
   .leaderboard-list .rank{ color: var(--firefly-gold); width:1.6em; flex:0 0 auto; }
@@ -332,15 +361,18 @@
 
     <!-- GAME OVER -->
     <div class="overlay hidden" id="screen-gameover">
-      <h1 class="pixel" style="color:var(--ember-coral)">GAME OVER</h1>
-      <div class="stat-row">
-        <span>DEWDROPS <b id="go-score">0</b></span>
+      <div class="overlay-inner">
+        <h1 class="pixel" style="color:var(--ember-coral)">GAME OVER</h1>
+        <div class="stat-row">
+          <span>DEWDROPS <b id="go-score">0</b></span>
+        </div>
+        <button class="btn" id="btn-retry">TRY AGAIN</button>
       </div>
-      <button class="btn" id="btn-retry">TRY AGAIN</button>
     </div>
 
     <!-- WIN -->
     <div class="overlay hidden" id="screen-win">
+      <div class="overlay-inner">
       <h1 class="pixel">HOLLOW CLEARED!</h1>
       <div class="stat-row">
         <span>DEWDROPS <b id="win-score">0</b></span>
@@ -362,6 +394,8 @@
       </div>
 
       <button class="btn" id="btn-again">PLAY AGAIN</button>
+      </div>
+      <div class="scroll-hint" id="win-scroll-hint" aria-hidden="true">▼</div>
     </div>
 
   </div>
@@ -386,7 +420,7 @@
   control — it's still a public, RLS-restricted key, just not one we want
   hardcoded and forgotten if it's ever rotated.
 -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.js"></script>
 <script>
 (() => {
   "use strict";
@@ -544,25 +578,39 @@
   function renderLeaderboard(rows, mineName){
     const list = document.getElementById("leaderboard-list");
     list.innerHTML = "";
-    rows.forEach((row, i) => {
+    if (rows.length === 0){
+      // A working leaderboard with zero rows (e.g. right after launch)
+      // used to just stay hidden, indistinguishable from "unavailable" —
+      // say so explicitly instead.
       const li = document.createElement("li");
-      if (mineName && row.name === mineName) li.classList.add("mine");
-      const rank = document.createElement("span");
-      rank.className = "rank"; rank.textContent = (i + 1) + ".";
-      const name = document.createElement("span");
-      name.className = "lb-name"; name.textContent = row.name;
-      const points = document.createElement("span");
-      points.className = "lb-score"; points.textContent = row.score;
-      li.append(rank, name, points);
+      li.className = "lb-empty";
+      li.textContent = "No scores yet — be the first!";
       list.appendChild(li);
-    });
-    show("leaderboard", rows.length > 0);
+    } else {
+      rows.forEach((row, i) => {
+        const li = document.createElement("li");
+        if (mineName && row.name === mineName) li.classList.add("mine");
+        const rank = document.createElement("span");
+        rank.className = "rank"; rank.textContent = (i + 1) + ".";
+        const name = document.createElement("span");
+        name.className = "lb-name"; name.textContent = row.name;
+        const points = document.createElement("span");
+        points.className = "lb-score"; points.textContent = row.score;
+        li.append(rank, name, points);
+        list.appendChild(li);
+      });
+    }
+    show("leaderboard", true);
+    updateWinScrollHint();
   }
 
   async function refreshLeaderboard(mineName){
     try {
       const rows = await fetchTopScores();
-      if (rows) renderLeaderboard(rows, mineName);
+      // Guard against "Play Again" starting a new run while this fetch was
+      // in flight — a stale response landing after that would otherwise
+      // repopulate the win-screen leaderboard list underneath the new run.
+      if (rows && state === STATE.WIN) renderLeaderboard(rows, mineName);
     } catch (e) {
       console.warn("Leaderboard fetch failed:", e);
     }
@@ -937,6 +985,17 @@
     document.getElementById(id).classList.toggle("hidden", !visible);
   }
 
+  // The win screen (title/stats/name-entry/leaderboard/Play-Again) can be
+  // taller than the frame on short viewports — .overlay scrolls instead of
+  // clipping (see CSS), but a first-time player has no reason to guess
+  // that. Bob a "more below" hint whenever there's unseen content, and
+  // hide it again once they've scrolled to the bottom.
+  function updateWinScrollHint(){
+    const el = document.getElementById("screen-win");
+    const hasMore = el.scrollHeight - el.clientHeight - el.scrollTop > 4;
+    document.getElementById("win-scroll-hint").classList.toggle("visible", hasMore);
+  }
+
   function loseLife(){
     // Note: invulnerability is checked by callers that need it (enemy
     // contact) — a pit-fall death must always go through, otherwise a
@@ -964,6 +1023,7 @@
     playSound("victory");
     resetScoreForm();
     refreshLeaderboard(null);
+    updateWinScrollHint();
   }
 
   function resetScoreForm(){
@@ -1936,6 +1996,7 @@
   document.getElementById("btn-start").addEventListener("click", startGame);
   document.getElementById("btn-retry").addEventListener("click", startGame);
   document.getElementById("btn-again").addEventListener("click", startGame);
+  document.getElementById("screen-win").addEventListener("scroll", updateWinScrollHint);
 
   document.getElementById("score-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1950,10 +2011,15 @@
     status.textContent = "Submitting…";
     try {
       await submitScore(name, score);
+      // "Play Again" may have already started a new run while this await
+      // was in flight — don't let a stale submit overwrite the next run's
+      // (freshly reset) win-screen status/input state.
+      if (state !== STATE.WIN) return;
       status.textContent = "Score submitted!";
       await refreshLeaderboard(name);
     } catch (err) {
       console.warn("Score submit failed:", err);
+      if (state !== STATE.WIN) return;
       status.textContent = "Couldn't submit score — try again later.";
       input.disabled = false; submitBtn.disabled = false;
     }
