@@ -312,6 +312,8 @@
   const MAX_RUN_SPEED = 260;           // px/s, running cap (also the airborne cap)
   const MAX_WALK_SPEED = Math.round(MAX_RUN_SPEED * 3/5); // px/s, walking cap (3:5 vs running)
   const JUMP_VELOCITY = -700;          // px/s impulse
+  const AIR_JUMP_VELOCITY = -620;      // px/s impulse for the extra mid-air (double) jump
+  const MAX_AIR_JUMPS = 1;             // extra jumps allowed per airborne phase, beyond the ground/coyote jump
   const JUMP_CUT_MULT = 0.5;           // shorten hop if jump released early
   const TERMINAL_VELOCITY = 900;
   const COYOTE_TIME = 0.09;            // seconds of grace after leaving ground
@@ -491,6 +493,14 @@
     if (e.code === "ArrowUp" || e.code === "KeyW" || e.code === "Space") setJump(true);
     if (e.code === "ShiftLeft" || e.code === "ShiftRight") input.run = true;
     if (e.code === "KeyX") setFire(true);
+    // Space/Enter also acts as the overlay button on the title, game-over,
+    // and win screens — Space is otherwise only wired to the jump action,
+    // which setJump() ignores outside STATE.PLAYING.
+    if ((e.code === "Space" || e.code === "Enter") && !e.repeat){
+      if (state === STATE.START) document.getElementById("btn-start").click();
+      else if (state === STATE.DEAD) document.getElementById("btn-retry").click();
+      else if (state === STATE.WIN) document.getElementById("btn-again").click();
+    }
   }, { passive:false });
 
   window.addEventListener("keyup", (e) => {
@@ -525,6 +535,7 @@
       this.onGround = false;
       this.facing = 1;
       this.coyote = 0;
+      this.airJumpsLeft = MAX_AIR_JUMPS;
       this.invuln = 0;
       this.inputFreeze = 0;
       this.animT = 0;
@@ -540,7 +551,7 @@
       this.vx = 0; this.vy = 0;
       this.invuln = INVULN_TIME;
       this.stompChain = 0; this.airBaseSpeed = 0; this.airBaseDir = 0; this.skidding = false;
-      this.glowsparkT = 0;
+      this.glowsparkT = 0; this.airJumpsLeft = MAX_AIR_JUMPS;
       // Losing a life resets power-up state back to Small, matching the
       // original NES game — a life doesn't carry Big/Ember progress.
       // cp.feetY is the checkpoint's ground contact line, so height changes
@@ -832,10 +843,19 @@
       }
     }
 
-    if (input.jumpEdge && (p.onGround || p.coyote > 0)){
-      p.vy = JUMP_VELOCITY;
-      p.onGround = false;
-      p.coyote = 0;
+    // Top the double-jump back up while grounded, so it's always full the
+    // moment the player leaves the ground — whether that's by jumping or
+    // just walking off a ledge.
+    if (p.onGround) p.airJumpsLeft = MAX_AIR_JUMPS;
+    if (input.jumpEdge){
+      if (p.onGround || p.coyote > 0){
+        p.vy = JUMP_VELOCITY;
+        p.onGround = false;
+        p.coyote = 0;
+      } else if (p.airJumpsLeft > 0){
+        p.vy = AIR_JUMP_VELOCITY;
+        p.airJumpsLeft--;
+      }
     }
     if (!input.jumpHeld && p.vy < JUMP_VELOCITY * JUMP_CUT_MULT){
       p.vy = JUMP_VELOCITY * JUMP_CUT_MULT;
