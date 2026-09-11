@@ -71,6 +71,9 @@
   }
   .hud-icon{ width:20px; height:20px; flex:0 0 auto; }
   #lives-icons{ display:flex; gap:4px; }
+  .hud-group{ display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
+  .hud-group:last-child{ align-items:flex-end; }
+  #form-pill, #timer-pill{ font-size: 12px; padding: 4px 10px; }
   #hud-title{
     align-self:flex-start;
     font-size: 10px;
@@ -167,6 +170,7 @@
   }
   .touch-btn.active{ background: rgba(255,209,102,0.5); }
   #jump-btn{ width:72px; height:72px; border-radius: 50%; font-size: 13px; font-family:'Press Start 2P', monospace; }
+  #btn-run, #btn-ember{ font-size: 10px; font-weight:800; text-align:center; }
 
   .sr-only{
     position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0);
@@ -211,14 +215,20 @@
     <canvas id="game" width="800" height="480" role="img" aria-label="Mossy Hollow game screen"></canvas>
 
     <div id="hud">
-      <div class="hud-pill" id="score-pill">
-        <svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#ffd166" stroke="#b8873c" stroke-width="2"/><circle cx="12" cy="12" r="4" fill="#fff3d2"/></svg>
-        <span><span id="score-val">0</span></span>
+      <div class="hud-group">
+        <div class="hud-pill" id="score-pill">
+          <svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#ffd166" stroke="#b8873c" stroke-width="2"/><circle cx="12" cy="12" r="4" fill="#fff3d2"/></svg>
+          <span><span id="score-val">0</span></span>
+        </div>
+        <div class="hud-pill" id="form-pill"><span id="form-val">Sprig</span></div>
       </div>
       <div id="hud-title" class="pixel">MOSSY&nbsp;HOLLOW</div>
-      <div class="hud-pill" id="lives-pill">
-        <div id="lives-icons" aria-hidden="true"></div>
-        <span class="sr-only" id="lives-sr"></span>
+      <div class="hud-group">
+        <div class="hud-pill" id="timer-pill">⏱ <span id="timer-val">400</span></div>
+        <div class="hud-pill" id="lives-pill">
+          <div id="lives-icons" aria-hidden="true"></div>
+          <span class="sr-only" id="lives-sr"></span>
+        </div>
       </div>
     </div>
 
@@ -230,6 +240,8 @@
       <div class="keys-hint">
         <span><kbd>←</kbd><kbd>→</kbd> or <kbd>A</kbd><kbd>D</kbd> move</span>
         <span><kbd>Space</kbd> / <kbd>↑</kbd> / <kbd>W</kbd> jump</span>
+        <span><kbd>Shift</kbd> hold to run</span>
+        <span><kbd>X</kbd> fire ember (Ember Sprig only)</span>
       </div>
     </div>
 
@@ -259,6 +271,8 @@
         <div class="touch-btn" id="btn-right" aria-hidden="true">▶</div>
       </div>
       <div class="touch-cluster">
+        <div class="touch-btn" id="btn-run" aria-hidden="true">RUN</div>
+        <div class="touch-btn" id="btn-ember" aria-hidden="true">EMBER</div>
         <div class="touch-btn" id="jump-btn" aria-hidden="true">JUMP</div>
       </div>
     </div>
@@ -275,15 +289,19 @@
   const VIEW_W = 800, VIEW_H = 480;            // logical canvas resolution
 
   const GRAVITY = 1900;                // px/s^2
-  const MOVE_ACCEL = 2000;             // px/s^2 while a direction is held
+  const WALK_ACCEL = 2000;             // px/s^2 while a direction is held, walking
+  const RUN_ACCEL = 2700;              // px/s^2 while a direction is held, running
   const AIR_ACCEL = 1500;
   const FRICTION = 2400;               // deceleration with no input
-  const MAX_RUN_SPEED = 260;           // px/s
+  const SKID_DECEL = 4200;             // deceleration when reversing direction at speed
+  const MAX_RUN_SPEED = 260;           // px/s, running cap (also the airborne cap)
+  const MAX_WALK_SPEED = Math.round(MAX_RUN_SPEED * 3/5); // px/s, walking cap (3:5 vs running)
   const JUMP_VELOCITY = -700;          // px/s impulse
   const JUMP_CUT_MULT = 0.5;           // shorten hop if jump released early
   const TERMINAL_VELOCITY = 900;
   const COYOTE_TIME = 0.09;            // seconds of grace after leaving ground
-  const INVULN_TIME = 1.0;             // seconds of flashing invulnerability
+  const INVULN_TIME = 1.0;             // seconds of flashing invulnerability after respawn
+  const HIT_REVERT_INVULN = 2.0;       // seconds of flicker after Big/Ember -> Small hit
   const RESPAWN_INPUT_FREEZE = 0.3;    // seconds movement input is ignored after respawn
   const PIT_FALL_LIMIT = ROWS * TILE + 140;
 
@@ -292,14 +310,48 @@
   const CAMERA_LOOKAHEAD = 60;         // px the camera leads toward the facing direction
   const CAMERA_SMOOTH = 6;             // higher = camera catches up to its target faster
 
+  const TIMER_UNIT_SECONDS = 0.4;      // one classic "time unit" = 0.4s
+  const TIMER_START_UNITS = 400;
+  const TIME_BONUS_PER_UNIT = 50;
+  const FIREFLY_BONUS_SCORE = 500;     // per firefly, when last timer digit is 1/3/6
+
+  const STOMP_CHAIN_SCORES = [100, 200, 400, 500, 800, 1000, 2000, 4000, 5000, 8000];
+  const COIN_SCORE = 200;
+  const COINS_PER_LIFE = 100;
+  const BLOCK_BREAK_SCORE = 50;
+  const POWERUP_SCORE = 1000;
+  const POLE_HEIGHT_SCORES = [100, 400, 800, 2000, 5000]; // low -> high contact band
+
+  const EMBER_SPEED = 320;
+  const EMBER_MAX_ONSCREEN = 2;
+  const EMBER_LIFETIME = 1.6;
+  const EMBER_KILL_SCORE = 200;
+
+  const GLOWSPARK_DURATION = 10.5;
+
+  const PILLBUG_SHELL_WAKE_TIME = 6.0;
+  const PILLBUG_SHELL_SLIDE_SPEED = 420;
+  const PILLBUG_SHELL_SLIDE_TIMEOUT = 5.0;
+
+  const SNAPPER_CYCLE = { hidden: 1.8, rising: 0.3, up: 1.5, retreat: 0.3 };
+
+  const SMALL_DIMS = { w: 26, h: 30 };
+  const BIG_DIMS   = { w: 28, h: 42 };
+
   const COLORS = {
     skyTop: "#2b2350", skyBottom: "#ff8f66",
     hillFar: "#241b3a", hillNear: "#362a5c",
     moss: "#3c8f6b", mossDark: "#235c46", dirt: "#6b4a34", dirtDark: "#4a3223",
     platform: "#3c8f6b", platformEdge: "#235c46",
     coin: "#ffd166", coinCore: "#fff3d2",
-    player: "#ff6f59", playerBelly: "#fdf3e7", playerOutline: "#7a2e22",
+    player: "#ff6f59", playerBig: "#ff8f66", playerEmber: "#ffb347",
+    playerBelly: "#fdf3e7", playerOutline: "#7a2e22",
     enemy: "#8b5fbf", enemyDark: "#5a3a86", enemySpike: "#caa6ff",
+    pillbug: "#5a9e6f", pillbugDark: "#356b47", shell: "#e8c15a", shellDark: "#a9862f",
+    snapper: "#c9536b", snapperDark: "#8a2f42",
+    block: "#8a6a4a", blockUsed: "#5c4632", blockShine: "#c9a877",
+    dewberry: "#ff6fa0", emberbud: "#ff8f3f", glowspark: "#fff3a0",
+    pole: "#d8c98a", poleTop: "#ffd166",
     portal: "#ffd166", portalCore: "#fff3e0"
   };
 
@@ -316,6 +368,16 @@
       { x: 9,  y: 10, len: 4 },                // early floating ledge
       { x: 39, y: 11, len: 6 }                 // mid floating ledge
     ],
+    blocks: [
+      { tx: 5,  ty: 11, kind: "bump",  contains: "dewberry" },
+      { tx: 7,  ty: 11, kind: "brick", contains: null },
+      { tx: 33, ty: 11, kind: "bump",  contains: "coins" },
+      { tx: 41, ty: 9,  kind: "bump",  contains: "emberbud" },
+      { tx: 48, ty: 11, kind: "bump",  contains: "coins" }
+    ],
+    powerups: [
+      { x: 56, y: LEVEL_ROW_Y(), kind: "glowspark" }
+    ],
     coins: [
       ...range(4,7).map(x => ({x, y: 13})),
       ...range(9,12).map(x => ({x, y: 9})),    // on the first ledge
@@ -324,11 +386,15 @@
       ...range(61,65).map(x => ({x, y: 13}))
     ],
     enemies: [
-      { x1: 22, x2: 31, y: LEVEL_ROW_Y() },
-      { x1: 39, x2: 49, y: LEVEL_ROW_Y() },
-      { x1: 58, x2: 63, y: LEVEL_ROW_Y() }
+      { kind: "spikeshroom", x1: 22, x2: 31, y: LEVEL_ROW_Y() },
+      { kind: "pillbug",     x1: 39, x2: 49, y: LEVEL_ROW_Y() },
+      { kind: "spikeshroom", x1: 58, x2: 63, y: LEVEL_ROW_Y() }
+    ],
+    snappers: [
+      { x: 14 }
     ],
     goal: { x: 67, y: LEVEL_ROW_Y() },
+    poleHeight: 5,                             // tiles tall
     start: { x: 2, y: LEVEL_ROW_Y() }
   };
   function LEVEL_ROW_Y(){ return (ROWS - 1); } // enemies/goal/start stand on groundRow
@@ -340,17 +406,25 @@
   function platformAt(tx, ty){
     return LEVEL.platforms.some(p => ty === p.y && tx >= p.x && tx < p.x + p.len);
   }
+  // `blocks` is the runtime (mutable) copy built in buildLevel() — declared
+  // in [GAME] below but read here by closure; isSolidTile is only ever
+  // called during play, after buildLevel() has run.
+  function blockAt(tx, ty){
+    return blocks.find(b => !b.broken && b.tx === tx && b.ty === ty);
+  }
   function isSolidTile(tx, ty){
     if (tx < 0 || tx >= LEVEL.cols) return true;     // world edges are solid
     if (ty >= LEVEL.rows) return false;
     if (ty === LEVEL.groundRow) return !inPit(tx);
     if (platformAt(tx, ty)) return true;
+    if (blockAt(tx, ty)) return true;
     return false;
   }
 
   /* ============================== [INPUT] ================================ */
-  const input = { left:false, right:false, jumpHeld:false, jumpEdge:false };
+  const input = { left:false, right:false, run:false, jumpHeld:false, jumpEdge:false, fireEdge:false };
   let jumpKeyDown = false;
+  let fireKeyDown = false;
 
   function setJump(down){
     // Only latch a jump edge while actually playing — otherwise a Space
@@ -362,12 +436,17 @@
     input.jumpHeld = down;
   }
 
+  function setFire(down){
+    if (down && !fireKeyDown && state === STATE.PLAYING) input.fireEdge = true;
+    fireKeyDown = down;
+  }
+
   // If the window loses focus mid-run (alt-tab, devtools, etc.) the
   // corresponding keyup can be missed entirely, leaving a direction
   // "stuck" held down for when the tab regains focus.
   window.addEventListener("blur", () => {
-    input.left = false; input.right = false; input.jumpHeld = false;
-    jumpKeyDown = false;
+    input.left = false; input.right = false; input.run = false; input.jumpHeld = false;
+    jumpKeyDown = false; fireKeyDown = false;
   });
 
   window.addEventListener("keydown", (e) => {
@@ -375,12 +454,16 @@
     if (e.code === "ArrowLeft" || e.code === "KeyA") input.left = true;
     if (e.code === "ArrowRight" || e.code === "KeyD") input.right = true;
     if (e.code === "ArrowUp" || e.code === "KeyW" || e.code === "Space") setJump(true);
+    if (e.code === "ShiftLeft" || e.code === "ShiftRight") input.run = true;
+    if (e.code === "KeyX") setFire(true);
   }, { passive:false });
 
   window.addEventListener("keyup", (e) => {
     if (e.code === "ArrowLeft" || e.code === "KeyA") input.left = false;
     if (e.code === "ArrowRight" || e.code === "KeyD") input.right = false;
     if (e.code === "ArrowUp" || e.code === "KeyW" || e.code === "Space") setJump(false);
+    if (e.code === "ShiftLeft" || e.code === "ShiftRight") input.run = false;
+    if (e.code === "KeyX") setFire(false);
   });
 
   function bindTouchButton(el, onDown, onUp){
@@ -393,12 +476,15 @@
   }
   bindTouchButton(document.getElementById("btn-left"),  () => input.left = true,  () => input.left = false);
   bindTouchButton(document.getElementById("btn-right"), () => input.right = true, () => input.right = false);
+  bindTouchButton(document.getElementById("btn-run"),   () => input.run = true,   () => input.run = false);
+  bindTouchButton(document.getElementById("btn-ember"), () => setFire(true),      () => setFire(false));
   bindTouchButton(document.getElementById("jump-btn"),  () => setJump(true),      () => setJump(false));
 
   /* ============================== [ENTITIES] ============================= */
   class Player {
     constructor(x, y){
-      this.w = 26; this.h = 30;
+      this.form = "small";           // "small" | "big" | "ember"
+      this.w = SMALL_DIMS.w; this.h = SMALL_DIMS.h;
       this.x = x; this.y = y;
       this.vx = 0; this.vy = 0;
       this.onGround = false;
@@ -408,11 +494,24 @@
       this.inputFreeze = 0;
       this.animT = 0;
       this.squash = 1;
+      this.skidding = false;
+      this.airBaseSpeed = 0;         // |vx| locked in the instant this jump/fall started
+      this.airBaseDir = 0;
+      this.stompChain = 0;           // consecutive stomp/kill count since last landing
+      this.glowsparkT = 0;
     }
     get feetTileY(){ return Math.floor((this.y + this.h + 1) / TILE); }
     respawn(cp){
-      this.x = cp.x; this.y = cp.y; this.vx = 0; this.vy = 0;
+      this.vx = 0; this.vy = 0;
       this.invuln = INVULN_TIME;
+      this.stompChain = 0; this.airBaseSpeed = 0; this.airBaseDir = 0; this.skidding = false;
+      this.glowsparkT = 0;
+      // Losing a life resets power-up state back to Small, matching the
+      // original NES game — a life doesn't carry Big/Ember progress.
+      // cp.feetY is the checkpoint's ground contact line, so height changes
+      // from a form reset don't leave the player floating or embedded.
+      this.form = "small"; this.w = SMALL_DIMS.w; this.h = SMALL_DIMS.h;
+      this.x = cp.x; this.y = cp.feetY - this.h;
       // Briefly ignore movement input after a respawn. Without this, a
       // direction key held during normal play (the common case) sends the
       // player straight back off the same pit lip they just fell into —
@@ -422,14 +521,78 @@
     }
   }
 
+  function setPlayerForm(newForm){
+    const p = player;
+    const wasSmall = p.form === "small";
+    const willBeSmall = newForm === "small";
+    if (wasSmall !== willBeSmall){
+      const dims = willBeSmall ? SMALL_DIMS : BIG_DIMS;
+      const oldBottom = p.y + p.h;
+      p.w = dims.w; p.h = dims.h;
+      p.y = oldBottom - p.h;           // keep feet planted (grow up / shrink down)
+    }
+    p.form = newForm;
+    updateHud();
+  }
+
+  // Hit by an enemy/hazard: Glowspark makes it a no-op, Big/Ember reverts
+  // to Small with a flicker instead of costing a life, and only a hit
+  // while already Small actually costs one — matching the original NES
+  // rule that Fire also drops straight to Small, not to Big.
+  function damagePlayer(sourceX){
+    if (player.glowsparkT > 0 || player.invuln > 0) return;
+    const knockDir = player.x < sourceX ? -1 : 1;
+    if (player.form !== "small"){
+      setPlayerForm("small");
+      player.invuln = HIT_REVERT_INVULN;
+      player.vx = knockDir * 220;
+      player.vy = -300;
+    } else {
+      player.vx = knockDir * 220;
+      player.vy = -300;
+      loseLife();
+    }
+  }
+
+  function awardStompScore(){
+    const idx = player.stompChain;
+    if (idx < STOMP_CHAIN_SCORES.length) score += STOMP_CHAIN_SCORES[idx];
+    else lives += 1;
+    player.stompChain++;
+    updateHud();
+  }
+  function awardShellChainScore(shell){
+    const idx = shell.shellChainIndex || 0;
+    if (idx < STOMP_CHAIN_SCORES.length) score += STOMP_CHAIN_SCORES[idx];
+    else lives += 1;
+    shell.shellChainIndex = idx + 1;
+    updateHud();
+  }
+
   class Enemy {
-    constructor(x1, x2, y){
+    constructor(kind, x1, x2, y){
+      this.kind = kind;              // "spikeshroom" | "pillbug"
       this.x1 = x1 * TILE; this.x2 = x2 * TILE - 20;
       this.w = 26; this.h = 22;
       this.x = this.x1; this.y = y * TILE - this.h;
       this.vx = 70; this.alive = true;
       this.bob = Math.random() * Math.PI * 2;
       this.deathT = 0;
+      this.mode = "walk";            // pillbug only: "walk" | "shell" | "shellSlide"
+      this.shellTimer = 0;
+      this.shellSlideT = 0;
+      this.shellChainIndex = 0;
+    }
+  }
+
+  class Snapper {
+    constructor(tx, groundRow){
+      this.kind = "snapper";
+      this.w = 26; this.h = 24;
+      this.x = tx * TILE; this.y = groundRow * TILE - this.h;
+      this.phaseT = Math.random() * 2;   // stagger multiple snappers
+      this.phase = "hidden";
+      this.alive = true;
     }
   }
 
@@ -455,24 +618,35 @@
   const STATE = { START:"start", PLAYING:"playing", DEAD:"gameover", WIN:"win" };
   let state = STATE.START;
 
-  let player, enemies, coins, portal, camera, checkpoint;
-  let score = 0, lives = 3, elapsed = 0;
+  let player, enemies, coins, blocks, powerups, embers, portal, camera, checkpoint;
+  let score = 0, lives = 3, elapsed = 0, coinCount = 0;
+  let timerUnits = TIMER_START_UNITS, timerAccum = 0;
+  let poleClimbed = false, poleFinishT = null, levelFinishing = false;
   let particles = [];
 
   function buildLevel(){
-    player = new Player(LEVEL.start.x * TILE, LEVEL.start.y * TILE - 30);
-    checkpoint = { x: player.x, y: player.y };
-    enemies = LEVEL.enemies.map(e => new Enemy(e.x1, e.x2, e.y));
+    player = new Player(LEVEL.start.x * TILE, LEVEL.start.y * TILE - SMALL_DIMS.h);
+    checkpoint = { x: player.x, feetY: player.y + player.h };
+    enemies = LEVEL.enemies.map(e => new Enemy(e.kind, e.x1, e.x2, e.y))
+      .concat(LEVEL.snappers.map(s => new Snapper(s.x, LEVEL.groundRow)));
     coins = LEVEL.coins.map(c => new Coin(c.x, c.y));
+    blocks = LEVEL.blocks.map(b => ({ tx: b.tx, ty: b.ty, kind: b.kind, contains: b.contains, used: false, broken: false, bumpT: 0 }));
+    powerups = LEVEL.powerups.map(p => ({ x: p.x * TILE + TILE/2, y: p.y * TILE, kind: p.kind, taken: false }));
+    embers = [];
     portal = new Portal(LEVEL.goal.x, LEVEL.goal.y);
     camera = { x: 0, lookahead: 0 };
-    score = 0; lives = 3; elapsed = 0;
+    score = 0; lives = 3; elapsed = 0; coinCount = 0;
+    timerUnits = TIMER_START_UNITS; timerAccum = 0;
+    poleClimbed = false; poleFinishT = null; levelFinishing = false;
     particles = [];
     updateHud();
   }
 
   function updateHud(){
     document.getElementById("score-val").textContent = score;
+    document.getElementById("timer-val").textContent = timerUnits;
+    document.getElementById("form-val").textContent =
+      player.form === "small" ? "Sprig" : player.form === "big" ? "Big Sprig" : "Ember Sprig";
     const box = document.getElementById("lives-icons");
     box.innerHTML = "";
     for(let i=0;i<lives;i++){
@@ -561,18 +735,55 @@
 
   function updatePlayer(dt){
     const p = player;
-    const wantDir = p.inputFreeze > 0 ? 0 : (input.right ? 1 : 0) - (input.left ? 1 : 0);
 
-    const accel = p.onGround ? MOVE_ACCEL : AIR_ACCEL;
-    if (wantDir !== 0){
-      p.vx += wantDir * accel * dt;
-      p.facing = wantDir;
-    } else {
-      const drop = FRICTION * dt;
-      if (Math.abs(p.vx) <= drop) p.vx = 0;
-      else p.vx -= Math.sign(p.vx) * drop;
+    // The pole grab freezes normal control — just let gravity settle the
+    // player onto/near the ground while finishLevel() counts down.
+    if (levelFinishing){
+      p.vy += GRAVITY * dt;
+      if (p.vy > TERMINAL_VELOCITY) p.vy = TERMINAL_VELOCITY;
+      const ry = aabbVsTiles(p.x, p.y, p.w, p.h, "y", p.vy * dt);
+      p.y = ry.pos;
+      if (ry.blocked) p.vy = 0;
+      return;
     }
-    p.vx = Math.max(-MAX_RUN_SPEED, Math.min(MAX_RUN_SPEED, p.vx));
+
+    const wasOnGround = p.onGround;
+    const wantDir = p.inputFreeze > 0 ? 0 : (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const running = input.run;
+    const walkRunCap = running ? MAX_RUN_SPEED : MAX_WALK_SPEED;
+
+    if (p.onGround){
+      if (wantDir !== 0){
+        const reversing = Math.sign(p.vx) !== 0 && Math.sign(p.vx) !== wantDir && Math.abs(p.vx) > 60;
+        if (reversing){
+          p.skidding = true;
+          const drop = SKID_DECEL * dt;
+          if (Math.abs(p.vx) <= drop) p.vx = 0; else p.vx -= Math.sign(p.vx) * drop;
+        } else {
+          p.skidding = false;
+          p.vx += wantDir * (running ? RUN_ACCEL : WALK_ACCEL) * dt;
+        }
+        p.facing = wantDir;
+      } else {
+        p.skidding = false;
+        const drop = FRICTION * dt;
+        if (Math.abs(p.vx) <= drop) p.vx = 0; else p.vx -= Math.sign(p.vx) * drop;
+      }
+      p.vx = Math.max(-walkRunCap, Math.min(walkRunCap, p.vx));
+    } else {
+      // Airborne: steer with air control, but speed gained before this
+      // jump/fall can't drop below its floor (in that same direction)
+      // and never exceeds the running cap either, until landing.
+      p.skidding = false;
+      if (wantDir !== 0){
+        p.vx += wantDir * AIR_ACCEL * dt;
+        p.facing = wantDir;
+      }
+      p.vx = Math.max(-MAX_RUN_SPEED, Math.min(MAX_RUN_SPEED, p.vx));
+      if (p.airBaseDir !== 0 && Math.sign(p.vx) === p.airBaseDir && Math.abs(p.vx) < p.airBaseSpeed){
+        p.vx = p.airBaseDir * p.airBaseSpeed;
+      }
+    }
 
     if (input.jumpEdge && (p.onGround || p.coyote > 0)){
       p.vy = JUMP_VELOCITY;
@@ -583,6 +794,11 @@
       p.vy = JUMP_VELOCITY * JUMP_CUT_MULT;
     }
     input.jumpEdge = false;
+
+    if (input.fireEdge && p.form === "ember" && embers.filter(e => e.alive).length < EMBER_MAX_ONSCREEN){
+      embers.push({ x: p.x + p.w/2, y: p.y + p.h*0.4, vx: p.facing * EMBER_SPEED, vy: 0, life: EMBER_LIFETIME, alive: true });
+    }
+    input.fireEdge = false;
 
     p.vy += GRAVITY * dt;
     if (p.vy > TERMINAL_VELOCITY) p.vy = TERMINAL_VELOCITY;
@@ -596,12 +812,30 @@
     const ry = aabbVsTiles(p.x, p.y, p.w, p.h, "y", p.vy * dt);
     p.y = ry.pos;
     if (ry.blocked){
-      if (ry.landed){ p.onGround = true; p.vy = 0; }
-      else { p.vy = 0; }
+      if (ry.landed){
+        p.onGround = true; p.vy = 0;
+        p.stompChain = 0; p.airBaseSpeed = 0; p.airBaseDir = 0;
+      } else {
+        p.vy = 0;
+        // Hit something from below — check for a bump/brick block there.
+        const headTxL = Math.floor(p.x / TILE), headTxR = Math.floor((p.x + p.w - 1) / TILE);
+        const headTy = Math.floor((p.y - 1) / TILE);
+        for (let tx = headTxL; tx <= headTxR; tx++){
+          const b = blockAt(tx, headTy);
+          if (b){ hitBlock(b); break; }
+        }
+      }
     } else {
       p.onGround = false;
     }
     p.coyote = p.onGround ? COYOTE_TIME : Math.max(0, p.coyote - dt);
+
+    // Just left the ground this frame (jump or walked off a ledge) — lock
+    // in the air-momentum floor/direction for the airborne rule above.
+    if (wasOnGround && !p.onGround){
+      p.airBaseSpeed = Math.min(Math.abs(p.vx), MAX_RUN_SPEED);
+      p.airBaseDir = Math.sign(p.vx);
+    }
 
     // Only bank a checkpoint with a one-tile buffer of solid ground on
     // both sides, not the instant the player is merely standing somewhere
@@ -609,12 +843,13 @@
     // player back exactly where they could walk straight off again.
     const footTx = Math.floor((p.x + p.w/2) / TILE);
     if (p.onGround && !inPit(footTx - 1) && !inPit(footTx) && !inPit(footTx + 1)){
-      checkpoint = { x: p.x, y: p.y };
+      checkpoint = { x: p.x, feetY: p.y + p.h };
     }
 
     p.invuln = Math.max(0, p.invuln - dt);
     p.inputFreeze = Math.max(0, p.inputFreeze - dt);
-    p.animT += dt * (Math.abs(p.vx) > 5 ? 10 : 3);
+    p.glowsparkT = Math.max(0, p.glowsparkT - dt);
+    p.animT += dt * (Math.abs(p.vx) > 5 ? (running ? 13 : 10) : 3);
     p.squash += ((p.onGround ? 1 : (p.vy < 0 ? 1.12 : 0.92)) - p.squash) * Math.min(1, dt*10);
 
     if (p.y > PIT_FALL_LIMIT) loseLife();
@@ -623,44 +858,231 @@
     p.x = Math.max(0, Math.min(p.x, LEVEL.cols * TILE - p.w));
   }
 
+  function hitBlock(b){
+    b.bumpT = 0.15;
+    if (b.kind === "brick"){
+      if (player.form !== "small"){
+        b.broken = true;
+        score += BLOCK_BREAK_SCORE; updateHud();
+        spawnBurst(b.tx*TILE + TILE/2, b.ty*TILE + TILE/2, COLORS.block);
+      }
+      return;
+    }
+    // "bump" block — reveal its contents once, then it's just a used block.
+    if (b.used) return;
+    b.used = true;
+    const px = b.tx*TILE + TILE/2, py = b.ty*TILE;
+    // Popped items roll off the block (classic Mario mushroom behavior)
+    // rather than resting back on its roof, which would be nearly
+    // impossible to reach from the ground below.
+    const rollDir = player.facing || 1;
+    if (b.contains === "dewberry") powerups.push({ x: px, y: py, kind: "dewberry", taken: false, vy: -260, vx: rollDir*60 });
+    else if (b.contains === "emberbud") powerups.push({ x: px, y: py, kind: "emberbud", taken: false, vy: -260, vx: rollDir*60 });
+    else if (b.contains === "coins"){
+      score += COIN_SCORE; coinCount++;
+      if (coinCount % COINS_PER_LIFE === 0) lives++;
+      updateHud();
+      spawnBurst(px, py, COLORS.coin);
+    }
+  }
+
   function updateEnemies(dt){
     for (const e of enemies){
-      if (!e.alive){
-        e.deathT += dt;
-        continue;
+      if (e.kind === "snapper"){ updateSnapper(e, dt); continue; }
+
+      if (!e.alive){ e.deathT += dt; continue; }
+
+      if (e.kind === "pillbug" && e.mode === "shell"){
+        e.shellTimer += dt;
+        if (e.shellTimer > PILLBUG_SHELL_WAKE_TIME){ e.mode = "walk"; e.vx = 70; e.shellTimer = 0; }
+      } else if (e.kind === "pillbug" && e.mode === "shellSlide"){
+        e.shellSlideT += dt;
+        const rx = aabbVsTiles(e.x, e.y, e.w, e.h, "x", e.vx * dt);
+        if (rx.blocked) e.vx = -e.vx; else e.x = rx.pos;
+        const footTx = Math.floor((e.x + e.w/2) / TILE);
+        if (!isSolidTile(footTx, LEVEL.groundRow)){ e.alive = false; e.deathT = 0; }
+        if (e.shellSlideT > PILLBUG_SHELL_SLIDE_TIMEOUT){ e.mode = "shell"; e.vx = 0; e.shellTimer = 0; }
+        // A sliding shell kills anything else (of any kind) it touches,
+        // chain-scoring against its own slide, same table as a stomp.
+        for (const other of enemies){
+          if (other === e || other.kind === "snapper" || !other.alive) continue;
+          if (other.kind === "pillbug" && other.mode !== "walk") continue;
+          if (rectsOverlap(e, other)){
+            other.alive = false; other.deathT = 0;
+            spawnBurst(other.x + other.w/2, other.y + other.h/2, COLORS.enemySpike);
+            awardShellChainScore(e);
+          }
+        }
+      } else {
+        // Normal patrol (spikeshroom, or a pillbug still in "walk" mode).
+        // Ledge check: turn around before walking onto empty air.
+        const dir = Math.sign(e.vx);
+        if (dir !== 0){
+          const footAheadX = dir > 0 ? e.x + e.w + 4 : e.x - 4;
+          const tx = Math.floor(footAheadX / TILE);
+          if (!isSolidTile(tx, LEVEL.groundRow)) e.vx = -e.vx;
+        }
+        e.x += e.vx * dt;
+        if (e.x < e.x1){ e.x = e.x1; e.vx = Math.abs(e.vx); }
+        if (e.x > e.x2){ e.x = e.x2; e.vx = -Math.abs(e.vx); }
       }
-      // Ledge check: turn around before walking onto empty air. The x1/x2
-      // patrol clamps below are hand-fitted to avoid the current level's
-      // pits, but this makes that safe-by-construction instead of
-      // safe-by-coincidence for any level added later.
-      const dir = Math.sign(e.vx);
-      if (dir !== 0){
-        const footAheadX = dir > 0 ? e.x + e.w + 4 : e.x - 4;
-        const tx = Math.floor(footAheadX / TILE);
-        if (!isSolidTile(tx, LEVEL.groundRow)) e.vx = -e.vx;
-      }
-      e.x += e.vx * dt;
-      if (e.x < e.x1){ e.x = e.x1; e.vx = Math.abs(e.vx); }
-      if (e.x > e.x2){ e.x = e.x2; e.vx = -Math.abs(e.vx); }
       e.bob += dt * 6;
 
-      if (rectsOverlap(player, e)){
+      if (e.alive && rectsOverlap(player, e)){
+        if (player.glowsparkT > 0){
+          e.alive = false; e.deathT = 0;
+          spawnBurst(e.x + e.w/2, e.y + e.h/2, COLORS.enemySpike);
+          awardStompScore();
+          continue;
+        }
         const playerBottom = player.y + player.h;
         const stomping = player.vy > 40 && playerBottom - e.y < 16;
-        if (stomping){
-          e.alive = false;
-          e.deathT = 0;
-          player.vy = JUMP_VELOCITY * 0.55;
-          score += 50; updateHud();
-          spawnBurst(e.x + e.w/2, e.y + e.h/2, COLORS.enemySpike);
-        } else if (player.invuln <= 0){
-          player.vx = (player.x < e.x ? -1 : 1) * 220;
-          player.vy = -300;
-          loseLife();
+        if (e.kind === "pillbug"){
+          if (e.mode === "walk"){
+            if (stomping){
+              e.mode = "shell"; e.shellTimer = 0; e.vx = 0;
+              player.vy = JUMP_VELOCITY * 0.55;
+              awardStompScore();
+              spawnBurst(e.x + e.w/2, e.y + e.h/2, COLORS.pillbugDark);
+            } else {
+              damagePlayer(e.x);
+            }
+          } else if (e.mode === "shell"){
+            // Idle shell: any touch kicks it away, no damage either way.
+            e.mode = "shellSlide";
+            e.vx = (player.x < e.x ? 1 : -1) * PILLBUG_SHELL_SLIDE_SPEED;
+            e.shellSlideT = 0; e.shellChainIndex = 0;
+          } else { // shellSlide
+            if (stomping){
+              e.mode = "shell"; e.vx = 0; e.shellTimer = 0;
+              player.vy = JUMP_VELOCITY * 0.55;
+              awardStompScore();
+            } else {
+              damagePlayer(e.x);
+            }
+          }
+        } else {
+          // spikeshroom
+          if (stomping){
+            e.alive = false; e.deathT = 0;
+            player.vy = JUMP_VELOCITY * 0.55;
+            awardStompScore();
+            spawnBurst(e.x + e.w/2, e.y + e.h/2, COLORS.enemySpike);
+          } else {
+            damagePlayer(e.x);
+          }
         }
       }
     }
-    enemies = enemies.filter(e => e.alive || e.deathT < 0.4);
+    enemies = enemies.filter(e => e.kind === "snapper" || e.alive || e.deathT < 0.4);
+  }
+
+  function updateSnapper(e, dt){
+    const C = SNAPPER_CYCLE;
+    const total = C.hidden + C.rising + C.up + C.retreat;
+    e.phaseT = (e.phaseT + dt) % total;
+    if (e.phaseT < C.hidden) e.phase = "hidden";
+    else if (e.phaseT < C.hidden + C.rising) e.phase = "rising";
+    else if (e.phaseT < C.hidden + C.rising + C.up) e.phase = "up";
+    else e.phase = "retreat";
+
+    if (e.phase === "up" && rectsOverlap(player, e)){
+      if (player.glowsparkT > 0){
+        awardStompScore();
+        spawnBurst(e.x + e.w/2, e.y + e.h/2, COLORS.snapperDark);
+        e.phaseT = 0; // pop back underground
+      } else {
+        // Can't be stomped or defeated by simple contact — only an Ember
+        // projectile or Glowspark clears it. Touching it just hurts.
+        damagePlayer(e.x);
+      }
+    }
+  }
+
+  function updateEmbers(dt){
+    for (const em of embers){
+      if (!em.alive) continue;
+      em.vy += GRAVITY * 0.6 * dt;
+      const rx = aabbVsTiles(em.x - 3, em.y - 3, 6, 6, "x", em.vx * dt);
+      em.x = rx.pos + 3;
+      if (rx.blocked) em.alive = false;
+      const ry = aabbVsTiles(em.x - 3, em.y - 3, 6, 6, "y", em.vy * dt);
+      em.y = ry.pos + 3;
+      if (ry.blocked){ if (ry.landed) em.vy = -420; else em.vy = 0; }
+      em.life -= dt;
+      if (em.life <= 0) em.alive = false;
+      if (em.x < camera.x - 40 || em.x > camera.x + VIEW_W + 40) em.alive = false;
+
+      for (const e of enemies){
+        if (!em.alive || !e.alive) continue;
+        if (e.kind === "pillbug" && e.mode === "shell") continue;
+        const emBox = { x: em.x - 3, y: em.y - 3, w: 6, h: 6 };
+        if (!rectsOverlap(emBox, e)) continue;
+        if (e.kind === "snapper"){
+          if (e.phase === "up"){
+            awardStompScore();
+            spawnBurst(e.x + e.w/2, e.y + e.h/2, COLORS.snapperDark);
+            e.phaseT = 0;
+            em.alive = false;
+          }
+        } else {
+          e.alive = false; e.deathT = 0;
+          spawnBurst(e.x + e.w/2, e.y + e.h/2, COLORS.enemySpike);
+          score += EMBER_KILL_SCORE; updateHud();
+          em.alive = false;
+        }
+      }
+    }
+    embers = embers.filter(em => em.alive);
+  }
+
+  function updateBlocks(dt){
+    for (const b of blocks){
+      if (b.bumpT > 0) b.bumpT = Math.max(0, b.bumpT - dt);
+    }
+  }
+
+  function updatePowerups(dt){
+    for (const pu of powerups){
+      if (pu.taken) continue;
+      if (pu.vy !== undefined){
+        pu.vy += GRAVITY * dt;
+        const ry = aabbVsTiles(pu.x - 8, pu.y - 8, 16, 16, "y", pu.vy * dt);
+        pu.y = ry.pos + 8;
+        if (ry.blocked && ry.landed) pu.vy = 0;
+        if (pu.vx){
+          const rx = aabbVsTiles(pu.x - 8, pu.y - 8, 16, 16, "x", pu.vx * dt);
+          if (rx.blocked) pu.vx = -pu.vx; else pu.x = rx.pos + 8;
+        }
+      }
+      const dx = (player.x + player.w/2) - pu.x, dy = (player.y + player.h/2) - pu.y;
+      if (Math.abs(dx) < 20 && Math.abs(dy) < 24){
+        pu.taken = true;
+        if (pu.kind === "dewberry"){
+          if (player.form === "small") setPlayerForm("big");
+        } else if (pu.kind === "emberbud"){
+          setPlayerForm("ember");
+        } else if (pu.kind === "glowspark"){
+          player.glowsparkT = GLOWSPARK_DURATION;
+        }
+        score += POWERUP_SCORE; updateHud();
+        spawnBurst(pu.x, pu.y, COLORS[pu.kind] || COLORS.coin);
+      }
+    }
+  }
+
+  function updateTimer(dt){
+    if (levelFinishing) return;
+    timerAccum += dt;
+    while (timerAccum >= TIMER_UNIT_SECONDS && timerUnits > 0){
+      timerUnits--; timerAccum -= TIMER_UNIT_SECONDS;
+      document.getElementById("timer-val").textContent = timerUnits;
+    }
+    if (timerUnits <= 0){
+      loseLife();
+      timerUnits = TIMER_START_UNITS; timerAccum = 0;
+      updateHud();
+    }
   }
 
   function updateCoins(){
@@ -671,21 +1093,47 @@
       const dy = (player.y + player.h/2) - c.y;
       if (Math.abs(dx) < 20 && Math.abs(dy) < 20){
         c.taken = true;
-        score += 10; updateHud();
+        score += COIN_SCORE; coinCount++;
+        if (coinCount % COINS_PER_LIFE === 0) lives++;
+        updateHud();
         spawnBurst(c.x, c.y, COLORS.coin);
       }
     }
   }
 
-  function updatePortal(dt){
+  // The goal is a reed pole: grabbing it anywhere along its height banks a
+  // score bonus based on how high up contact was made (low->high bands),
+  // then a short freeze (levelFinishing) before finishLevel() adds the
+  // time bonus / timer-digit firefly bonus and shows the win screen.
+  function updatePole(dt){
     portal.t += dt;
-    // Doorway hitbox: a column centered on the portal, from the ground
-    // up to about two tiles high (matches the drawn swirl in drawPortal).
+    if (poleClimbed) return;
+    const poleBaseY = portal.y + TILE;               // ground line
+    const poleTopY = portal.y - (LEVEL.poleHeight - 1) * TILE;
     const px = player.x + player.w/2;
-    const py = player.y + player.h/2;
-    const withinX = Math.abs(px - portal.x) < 18;
-    const withinY = py > portal.y - TILE*2.2 && py < portal.y + 4;
-    if (withinX && withinY) winLevel();
+    const withinX = Math.abs(px - portal.x) < 20;
+    const withinY = (player.y + player.h) > poleTopY - 8 && player.y < poleBaseY;
+    if (withinX && withinY){
+      poleClimbed = true;
+      const contactY = player.y + player.h/2;
+      const frac = Math.max(0, Math.min(1, (poleBaseY - contactY) / (poleBaseY - poleTopY)));
+      const bandIdx = Math.min(POLE_HEIGHT_SCORES.length - 1, Math.floor(frac * POLE_HEIGHT_SCORES.length));
+      score += POLE_HEIGHT_SCORES[bandIdx];
+      updateHud();
+      levelFinishing = true;
+      poleFinishT = 0.6;
+    }
+  }
+
+  function finishLevel(){
+    score += timerUnits * TIME_BONUS_PER_UNIT;
+    const lastDigit = timerUnits % 10;
+    if ([1,3,6].includes(lastDigit)){
+      score += lastDigit * FIREFLY_BONUS_SCORE;
+      for (let i=0;i<lastDigit;i++) spawnBurst(portal.x, portal.y, "rgba(255,209,102,0.9)");
+    }
+    updateHud();
+    winLevel();
   }
 
   function rectsOverlap(a, b){
@@ -814,6 +1262,7 @@
 
   function drawEnemies(){
     for (const e of enemies){
+      if (e.kind === "snapper"){ drawSnapper(e); continue; }
       const sx = e.x - camera.x, sy = e.y + (e.alive ? Math.sin(e.bob)*2 : 0);
       ctx.save();
       ctx.translate(sx, sy);
@@ -821,37 +1270,120 @@
         ctx.globalAlpha = Math.max(0, 1 - e.deathT/0.4);
         ctx.scale(1, 0.3);
       }
-      ctx.fillStyle = COLORS.enemyDark;
-      ctx.beginPath(); ctx.ellipse(e.w/2, e.h*0.6, e.w/2, e.h*0.42, 0, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = COLORS.enemy;
-      ctx.beginPath(); ctx.ellipse(e.w/2, e.h*0.45, e.w/2-1, e.h*0.4, 0, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = COLORS.enemySpike;
-      for (let i=-1;i<=1;i++){
-        ctx.beginPath();
-        ctx.moveTo(e.w/2 + i*8, 2);
-        ctx.lineTo(e.w/2 + i*8 - 4, e.h*0.35);
-        ctx.lineTo(e.w/2 + i*8 + 4, e.h*0.35);
-        ctx.closePath(); ctx.fill();
-      }
-      ctx.fillStyle = "#1b1030";
-      ctx.beginPath(); ctx.arc(e.w/2-6, e.h*0.5, 2, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(e.w/2+6, e.h*0.5, 2, 0, Math.PI*2); ctx.fill();
+      drawEnemyBody(e);
       ctx.restore();
     }
   }
 
-  function drawPortal(){
-    const sx = portal.x - camera.x, sy = portal.y;
-    ctx.save();
-    ctx.translate(sx, sy + TILE);
-    for (let r=0;r<3;r++){
-      const rad = 14 + r*7 + Math.sin(portal.t*2 + r)*3;
-      ctx.strokeStyle = `rgba(255,209,102,${0.5 - r*0.13})`;
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.ellipse(0, -TILE, 8, rad, 0, 0, Math.PI*2); ctx.stroke();
+  function drawEnemyBody(e){
+    if (e.kind === "pillbug"){
+      const inShell = e.mode !== "walk";
+      ctx.fillStyle = inShell ? COLORS.shellDark : COLORS.pillbugDark;
+      ctx.beginPath(); ctx.ellipse(e.w/2, e.h*0.6, e.w/2, e.h*0.42, 0, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = inShell ? COLORS.shell : COLORS.pillbug;
+      ctx.beginPath(); ctx.ellipse(e.w/2, e.h*0.45, e.w/2-1, e.h*0.4, 0, 0, Math.PI*2); ctx.fill();
+      if (!inShell){
+        ctx.fillStyle = "#1b1030";
+        ctx.beginPath(); ctx.arc(e.w/2-6, e.h*0.5, 2, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(e.w/2+6, e.h*0.5, 2, 0, Math.PI*2); ctx.fill();
+      } else {
+        ctx.strokeStyle = COLORS.shellDark; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(e.w/2, e.h*0.45, e.w/2-6, 0, Math.PI*2); ctx.stroke();
+      }
+      return;
     }
-    ctx.fillStyle = COLORS.portalCore;
-    ctx.beginPath(); ctx.ellipse(0, -TILE, 5, 16, 0, 0, Math.PI*2); ctx.fill();
+    // spikeshroom
+    ctx.fillStyle = COLORS.enemyDark;
+    ctx.beginPath(); ctx.ellipse(e.w/2, e.h*0.6, e.w/2, e.h*0.42, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = COLORS.enemy;
+    ctx.beginPath(); ctx.ellipse(e.w/2, e.h*0.45, e.w/2-1, e.h*0.4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = COLORS.enemySpike;
+    for (let i=-1;i<=1;i++){
+      ctx.beginPath();
+      ctx.moveTo(e.w/2 + i*8, 2);
+      ctx.lineTo(e.w/2 + i*8 - 4, e.h*0.35);
+      ctx.lineTo(e.w/2 + i*8 + 4, e.h*0.35);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = "#1b1030";
+    ctx.beginPath(); ctx.arc(e.w/2-6, e.h*0.5, 2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(e.w/2+6, e.h*0.5, 2, 0, Math.PI*2); ctx.fill();
+  }
+
+  function drawSnapper(e){
+    if (e.phase === "hidden") return;
+    const sx = e.x - camera.x, sy = e.y;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.fillStyle = COLORS.snapperDark;
+    ctx.beginPath(); ctx.ellipse(e.w/2, e.h*0.7, e.w/2, e.h*0.3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = COLORS.snapper;
+    ctx.beginPath(); ctx.ellipse(e.w/2, e.h*0.4, e.w/2-1, e.h*0.4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = "#1b1030";
+    ctx.beginPath(); ctx.arc(e.w/2-5, e.h*0.4, 2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(e.w/2+5, e.h*0.4, 2, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawBlocks(){
+    for (const b of blocks){
+      if (b.kind === "brick" && b.broken) continue;
+      const sx = b.tx*TILE - camera.x;
+      const bounce = b.bumpT > 0 ? Math.sin(Math.min(1, b.bumpT/0.15) * Math.PI) * 6 : 0;
+      const sy = b.ty*TILE - bounce;
+      const used = b.kind === "brick" || b.used;
+      ctx.fillStyle = used ? COLORS.blockUsed : COLORS.block;
+      ctx.fillRect(sx, sy, TILE, TILE);
+      ctx.fillStyle = COLORS.blockShine;
+      ctx.fillRect(sx+3, sy+3, TILE-6, 4);
+      if (b.kind === "bump" && !b.used){
+        ctx.fillStyle = "#3a2818";
+        ctx.font = "bold 14px sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("?", sx + TILE/2, sy + TILE/2 + 1);
+      }
+    }
+  }
+
+  function drawPowerups(){
+    for (const pu of powerups){
+      if (pu.taken) continue;
+      const sx = pu.x - camera.x, sy = pu.y;
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.fillStyle = COLORS[pu.kind] || COLORS.coin;
+      ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.beginPath(); ctx.arc(-3, -3, 3, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function drawEmbers(){
+    for (const em of embers){
+      const sx = em.x - camera.x, sy = em.y;
+      ctx.fillStyle = "#ffb347";
+      ctx.beginPath(); ctx.arc(sx, sy, 5, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "#fff3d2";
+      ctx.beginPath(); ctx.arc(sx-1, sy-1, 2, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  function drawPole(){
+    const sx = portal.x - camera.x;
+    const baseY = portal.y + TILE;
+    const topY = portal.y - (LEVEL.poleHeight - 1) * TILE;
+    ctx.save();
+    ctx.fillStyle = COLORS.pole;
+    ctx.fillRect(sx-3, topY, 6, baseY-topY);
+    ctx.fillStyle = COLORS.poleTop;
+    ctx.beginPath(); ctx.arc(sx, topY, 8, 0, Math.PI*2); ctx.fill();
+    for (let r=0;r<3;r++){
+      const rad = 10 + r*6 + Math.sin(portal.t*2 + r)*2;
+      ctx.strokeStyle = `rgba(255,209,102,${0.4 - r*0.1})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(sx, topY, 6, rad, 0, 0, Math.PI*2); ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -863,6 +1395,7 @@
     ctx.translate(sx + p.w/2, sy + p.h);
     ctx.scale(p.facing, 1);
     ctx.scale(1/p.squash, p.squash);
+    if (p.skidding) ctx.rotate(-0.12);
 
     // The drawn silhouette is scaled up from the physics hitbox (p.w/p.h)
     // to read as a bold, big-headed platformer hero at a glance; feet stay
@@ -874,14 +1407,18 @@
     const legH = 9;
     const bodyTop = -VH + headH * 0.92;
 
+    const bodyColor = p.glowsparkT > 0
+      ? (Math.floor(elapsed*12) % 2 === 0 ? COLORS.glowspark : COLORS.player)
+      : (p.form === "ember" ? COLORS.playerEmber : p.form === "big" ? COLORS.playerBig : COLORS.player);
+
     // legs
     const stride = Math.sin(p.animT) * (p.onGround ? 7 : 0);
-    ctx.fillStyle = COLORS.playerOutline;
+    ctx.fillStyle = p.skidding ? COLORS.blockUsed : COLORS.playerOutline;
     ctx.fillRect(-VW*0.34 + stride*0.3, -legH, VW*0.26, legH);
     ctx.fillRect(VW*0.08 - stride*0.3, -legH, VW*0.26, legH);
 
     // lower body (narrower than the head, classic top-heavy hero proportion)
-    ctx.fillStyle = COLORS.player;
+    ctx.fillStyle = bodyColor;
     ctx.lineWidth = 2.5; ctx.strokeStyle = COLORS.playerOutline;
     roundRect(ctx, -VW*0.32, bodyTop, VW*0.64, -legH - bodyTop, 8);
     ctx.fill(); ctx.stroke();
@@ -938,9 +1475,12 @@
     ctx.clearRect(0,0,VIEW_W,VIEW_H);
     drawBackground();
     drawTiles();
-    drawPortal();
+    drawBlocks();
+    drawPole();
+    drawPowerups();
     drawCoins();
     drawEnemies();
+    drawEmbers();
     drawParticles();
     drawPlayer();
   }
@@ -955,12 +1495,20 @@
 
     if (state === STATE.PLAYING){
       elapsed += dt;
+      updateTimer(dt);
       updatePlayer(dt);
       updateEnemies(dt);
       updateCoins();
-      updatePortal(dt);
+      updateBlocks(dt);
+      updatePowerups(dt);
+      updateEmbers(dt);
+      updatePole(dt);
       updateParticles(dt);
       updateCamera(dt);
+      if (poleFinishT !== null){
+        poleFinishT -= dt;
+        if (poleFinishT <= 0){ poleFinishT = null; finishLevel(); }
+      }
     }
     render();
   }
