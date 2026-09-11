@@ -5,12 +5,11 @@ name: Deploy to server via SSH
 #
 # Requires these repository secrets (Settings -> Secrets and variables ->
 # Actions -> New repository secret) before this workflow can run:
-#   DEPLOY_HOST     server IP or domain
-#   DEPLOY_USER     SSH username on the server
-#   DEPLOY_SSH_KEY  private key contents (a dedicated deploy key, not your
-#                   personal one) whose matching public key is authorized
-#                   on the server for DEPLOY_USER
-#   DEPLOY_PORT     optional, only needed if SSH runs on a non-default port
+#   DEPLOY_HOST      server IP or domain
+#   DEPLOY_USER      SSH username on the server
+#   DEPLOY_PASSWORD  password for DEPLOY_USER (this server only accepts
+#                    password auth, not key-based auth)
+#   DEPLOY_PORT      optional, only needed if SSH runs on a non-default port
 on:
   push:
     branches: ["main"]
@@ -32,7 +31,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
           source: "index.html"
           target: "/srv/www/p03/"
           strip_components: 0
