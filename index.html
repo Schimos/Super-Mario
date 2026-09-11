@@ -287,6 +287,11 @@
   const RESPAWN_INPUT_FREEZE = 0.3;    // seconds movement input is ignored after respawn
   const PIT_FALL_LIMIT = ROWS * TILE + 140;
 
+  const CAMERA_DEADZONE = 50;          // px either side of screen-center the
+                                        // player can move before the camera follows
+  const CAMERA_LOOKAHEAD = 60;         // px the camera leads toward the facing direction
+  const CAMERA_SMOOTH = 6;             // higher = camera catches up to its target faster
+
   const COLORS = {
     skyTop: "#2b2350", skyBottom: "#ff8f66",
     hillFar: "#241b3a", hillNear: "#362a5c",
@@ -460,7 +465,7 @@
     enemies = LEVEL.enemies.map(e => new Enemy(e.x1, e.x2, e.y));
     coins = LEVEL.coins.map(c => new Coin(c.x, c.y));
     portal = new Portal(LEVEL.goal.x, LEVEL.goal.y);
-    camera = { x: 0 };
+    camera = { x: 0, lookahead: 0 };
     score = 0; lives = 3; elapsed = 0;
     particles = [];
     updateHud();
@@ -700,10 +705,26 @@
     particles = particles.filter(pt => pt.life > 0);
   }
 
-  /* ============================== [CAMERA] ================================ */
-  function updateCamera(){
-    const target = player.x + player.w/2 - VIEW_W/2;
-    camera.x = Math.max(0, Math.min(target, LEVEL.cols*TILE - VIEW_W));
+  /* ============================== [CAMERA] ================================
+     A camera hard-locked to the player's exact center reads twitchy at
+     normal run speed. Polished platformers instead use a small deadzone
+     (the player can move near mid-screen before the camera reacts), a
+     touch of look-ahead in the direction of travel (more visible room
+     ahead while running), and smoothing so the camera eases toward its
+     target instead of snapping every frame.                             */
+  function updateCamera(dt){
+    const centerX = player.x + player.w/2;
+    const screenX = centerX - camera.x;      // player's current position on screen
+
+    let followX = camera.x;
+    if (screenX < VIEW_W/2 - CAMERA_DEADZONE) followX = centerX - (VIEW_W/2 - CAMERA_DEADZONE);
+    else if (screenX > VIEW_W/2 + CAMERA_DEADZONE) followX = centerX - (VIEW_W/2 + CAMERA_DEADZONE);
+
+    const lookTarget = (player.vx / MAX_RUN_SPEED) * CAMERA_LOOKAHEAD;
+    camera.lookahead += (lookTarget - camera.lookahead) * Math.min(1, dt * CAMERA_SMOOTH);
+
+    const target = Math.max(0, Math.min(followX + camera.lookahead, LEVEL.cols*TILE - VIEW_W));
+    camera.x += (target - camera.x) * Math.min(1, dt * CAMERA_SMOOTH);
   }
 
   /* ============================== [RENDER] ================================ */
@@ -939,7 +960,7 @@
       updateCoins();
       updatePortal(dt);
       updateParticles(dt);
-      updateCamera();
+      updateCamera(dt);
     }
     render();
   }
