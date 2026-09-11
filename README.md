@@ -8,6 +8,10 @@ spikeshrooms from above, collect dewdrops, and reach the glowing portal.
 This is intentionally an original character and world (not Nintendo's Mario)
 — see "Why an original character?" below.
 
+**Play it live:** https://schimos.github.io/Super-Mario/ (deployed
+automatically from `main` via the GitHub Actions workflow in
+`.github/workflows/deploy-pages.yml`).
+
 ## Run it
 
 Just open `index.html` in a browser. That's it — no `npm install`, no local
