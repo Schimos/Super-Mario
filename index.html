@@ -348,10 +348,22 @@
   let jumpKeyDown = false;
 
   function setJump(down){
-    if (down && !jumpKeyDown) input.jumpEdge = true;
+    // Only latch a jump edge while actually playing — otherwise a Space
+    // press on the Game Over/Win overlay (Space is also the jump key)
+    // gets buffered and fires as an instant jump the moment the next run
+    // starts.
+    if (down && !jumpKeyDown && state === STATE.PLAYING) input.jumpEdge = true;
     jumpKeyDown = down;
     input.jumpHeld = down;
   }
+
+  // If the window loses focus mid-run (alt-tab, devtools, etc.) the
+  // corresponding keyup can be missed entirely, leaving a direction
+  // "stuck" held down for when the tab regains focus.
+  window.addEventListener("blur", () => {
+    input.left = false; input.right = false; input.jumpHeld = false;
+    jumpKeyDown = false;
+  });
 
   window.addEventListener("keydown", (e) => {
     if (["ArrowLeft","ArrowRight","ArrowUp","Space"].includes(e.code)) e.preventDefault();
