@@ -1,0 +1,44 @@
+name: Generate game SFX (ElevenLabs)
+
+# One-off / re-run-as-needed generator: calls ElevenLabs' sound-generation
+# API for Mossy Hollow's sound effects and commits the resulting files under
+# assets/sfx/. Manual only (workflow_dispatch) — this costs API credits, so
+# it never runs on every push. Existing files are skipped unless force_regen
+# is set, so re-running only fills in new/missing sounds.
+on:
+  workflow_dispatch:
+    inputs:
+      force_regen:
+        description: "Regenerate every sound, even ones that already exist"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Generate sound effects
+        env:
+          ELEVEN_LABS: ${{ secrets.ELEVEN_LABS }}
+          FORCE_REGEN: ${{ inputs.force_regen && '1' || '' }}
+        run: node .github/scripts/generate-sfx.mjs
+      - name: Commit generated assets
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add assets/sfx
+          if git diff --cached --quiet; then
+            echo "No new/changed sound files to commit."
+          else
+            git commit -m "Generate game SFX via ElevenLabs"
+            git push
+          fi
