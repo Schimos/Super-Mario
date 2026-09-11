@@ -48,6 +48,9 @@
   canvas#game{
     display:block;
     width:100%; height:100%;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
   }
 
   .pixel{ font-family:'Press Start 2P', 'Baloo 2', monospace; }
@@ -285,7 +288,7 @@
 
   /* ============================== [CONFIG] ============================== */
   const TILE = 32;
-  const COLS = 70, ROWS = 15;                 // world = 2240 x 480 px
+  const COLS = 82, ROWS = 15;                 // world = 2624 x 480 px
   const VIEW_W = 800, VIEW_H = 480;            // logical canvas resolution
 
   const GRAVITY = 1900;                // px/s^2
@@ -352,7 +355,10 @@
     block: "#8a6a4a", blockUsed: "#5c4632", blockShine: "#c9a877",
     dewberry: "#ff6fa0", emberbud: "#ff8f3f", glowspark: "#fff3a0",
     pole: "#d8c98a", poleTop: "#ffd166",
-    portal: "#ffd166", portalCore: "#fff3e0"
+    portal: "#ffd166", portalCore: "#fff3e0",
+    stair: "#6b4a34", stairDark: "#4a3223", stud: "rgba(0,0,0,0.18)", studLight: "rgba(255,255,255,0.22)",
+    house: "#8a6a4a", houseDark: "#5c4632", houseRoof: "#c9536b", houseRoofDark: "#8a2f42", houseDoor: "#2b2350",
+    pipe: "#3f6e63", pipeDark: "#2a4a42", pipeRim: "#57907f"
   };
 
   /* ============================== [LEVEL] ================================
@@ -390,11 +396,23 @@
       { kind: "pillbug",     x1: 39, x2: 49, y: LEVEL_ROW_Y() },
       { kind: "spikeshroom", x1: 58, x2: 63, y: LEVEL_ROW_Y() }
     ],
+    // Ambush enemies that pop up out of a pipe-like riser — one early,
+    // two more clustered in the run-up to the end-of-level stairs for
+    // extra late-level challenge.
     snappers: [
-      { x: 14 }
+      { x: 14 },
+      { x: 65 },
+      { x: 70 }
     ],
-    goal: { x: 67, y: LEVEL_ROW_Y() },
-    poleHeight: 5,                             // tiles tall
+    stairs: [
+      { tx: 72, h: 1 },
+      { tx: 73, h: 2 },
+      { tx: 74, h: 3 },
+      { tx: 75, h: 4 }
+    ],
+    goal: { x: 77, y: LEVEL_ROW_Y() },
+    poleHeight: 6,                              // tiles tall — a bit taller than the stair peak
+    house: { x: 80 },
     start: { x: 2, y: LEVEL_ROW_Y() }
   };
   function LEVEL_ROW_Y(){ return (ROWS - 1); } // enemies/goal/start stand on groundRow
@@ -412,12 +430,17 @@
   function blockAt(tx, ty){
     return blocks.find(b => !b.broken && b.tx === tx && b.ty === ty);
   }
+  function stairAt(tx, ty){
+    const s = LEVEL.stairs.find(s => s.tx === tx);
+    return !!s && ty >= LEVEL.groundRow - s.h && ty <= LEVEL.groundRow - 1;
+  }
   function isSolidTile(tx, ty){
     if (tx < 0 || tx >= LEVEL.cols) return true;     // world edges are solid
     if (ty >= LEVEL.rows) return false;
     if (ty === LEVEL.groundRow) return !inPit(tx);
     if (platformAt(tx, ty)) return true;
     if (blockAt(tx, ty)) return true;
+    if (stairAt(tx, ty)) return true;
     return false;
   }
 
@@ -613,7 +636,19 @@
 
   /* ============================== [GAME] ================================= */
   const canvas = document.getElementById("game");
-  const ctx = canvas.getContext("2d");
+  const screenCtx = canvas.getContext("2d");
+  screenCtx.imageSmoothingEnabled = false;
+
+  // Everything is drawn into a small offscreen buffer at a fraction of the
+  // real resolution, then blown back up with smoothing off — the classic
+  // trick for a chunky, old-fashioned pixel-art look without touching any
+  // of the drawing code below (it all still works in VIEW_W/VIEW_H space).
+  const PIXEL_SCALE = 2;
+  const pixelCanvas = document.createElement("canvas");
+  pixelCanvas.width = VIEW_W / PIXEL_SCALE;
+  pixelCanvas.height = VIEW_H / PIXEL_SCALE;
+  const ctx = pixelCanvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
 
   const STATE = { START:"start", PLAYING:"playing", DEAD:"gameover", WIN:"win" };
   let state = STATE.START;
@@ -876,8 +911,8 @@
     // rather than resting back on its roof, which would be nearly
     // impossible to reach from the ground below.
     const rollDir = player.facing || 1;
-    if (b.contains === "dewberry") powerups.push({ x: px, y: py, kind: "dewberry", taken: false, vy: -260, vx: rollDir*60 });
-    else if (b.contains === "emberbud") powerups.push({ x: px, y: py, kind: "emberbud", taken: false, vy: -260, vx: rollDir*60 });
+    if (b.contains === "dewberry") powerups.push({ x: px, y: py, kind: "dewberry", taken: false, vy: -260, vx: rollDir*60, popT: 0.4 });
+    else if (b.contains === "emberbud") powerups.push({ x: px, y: py, kind: "emberbud", taken: false, vy: -260, vx: rollDir*60, popT: 0.4 });
     else if (b.contains === "coins"){
       score += COIN_SCORE; coinCount++;
       if (coinCount % COINS_PER_LIFE === 0) lives++;
@@ -1045,6 +1080,7 @@
   function updatePowerups(dt){
     for (const pu of powerups){
       if (pu.taken) continue;
+      if (pu.popT > 0) pu.popT = Math.max(0, pu.popT - dt);
       if (pu.vy !== undefined){
         pu.vy += GRAVITY * dt;
         const ry = aabbVsTiles(pu.x - 8, pu.y - 8, 16, 16, "y", pu.vy * dt);
@@ -1123,6 +1159,15 @@
       levelFinishing = true;
       poleFinishT = 0.6;
     }
+  }
+
+  // After sliding down the pole, control returns to the player so they can
+  // walk the rest of the way to the house — that's the actual finish
+  // trigger, not the pole itself.
+  function updateHouse(dt){
+    if (!poleClimbed || levelFinishing) return;
+    const houseX = LEVEL.house.x * TILE;
+    if (Math.abs((player.x + player.w/2) - houseX) < 26) finishLevel();
   }
 
   function finishLevel(){
@@ -1212,6 +1257,19 @@
     ctx.fill();
   }
 
+  // A small 2x2 grid of raised "studs" on a tile's top face — the one
+  // repeated detail that reads as chunky building-brick/retro-block
+  // rather than a flat color fill, on every solid surface in the game.
+  function drawStuds(sx, sy){
+    for (let i=0;i<2;i++) for (let j=0;j<2;j++){
+      const cx = sx + TILE*0.28 + i*TILE*0.44, cy = sy + TILE*0.28 + j*TILE*0.44;
+      ctx.fillStyle = COLORS.studLight;
+      ctx.beginPath(); ctx.arc(cx-1, cy-1, 2.6, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = COLORS.stud;
+      ctx.beginPath(); ctx.arc(cx+1, cy+1, 2.6, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
   function drawTiles(){
     const startCol = Math.floor(camera.x / TILE) - 1;
     const endCol = Math.ceil((camera.x + VIEW_W) / TILE) + 1;
@@ -1224,6 +1282,7 @@
         ctx.fillRect(sx, sy, TILE, 6);
         ctx.fillStyle = COLORS.mossDark;
         ctx.fillRect(sx, sy+6, TILE, TILE-6);
+        drawStuds(sx, sy);
         for (let dy = sy+TILE; dy < ROWS*TILE; dy += TILE){
           ctx.fillStyle = COLORS.dirt;
           ctx.fillRect(sx, dy, TILE, TILE);
@@ -1238,7 +1297,22 @@
           ctx.fillRect(sx, sy, TILE, 8);
           ctx.fillStyle = COLORS.platformEdge;
           ctx.fillRect(sx, sy+8, TILE, TILE-8);
+          drawStuds(sx, sy);
         }
+      }
+    }
+  }
+
+  function drawStairs(){
+    for (const s of LEVEL.stairs){
+      const sx = s.tx*TILE - camera.x;
+      for (let step=0; step<s.h; step++){
+        const sy = (LEVEL.groundRow - 1 - step) * TILE;
+        ctx.fillStyle = COLORS.stair;
+        ctx.fillRect(sx, sy, TILE, TILE);
+        ctx.fillStyle = COLORS.stairDark;
+        ctx.fillRect(sx, sy, TILE, 4);
+        if (step === s.h - 1) drawStuds(sx, sy);
       }
     }
   }
@@ -1351,6 +1425,13 @@
       const sx = pu.x - camera.x, sy = pu.y;
       ctx.save();
       ctx.translate(sx, sy);
+      // A decaying spring "boing" right after popping out of a block —
+      // squash/stretch that settles to normal size.
+      if (pu.popT > 0){
+        const k = pu.popT / 0.4;
+        const s = 1 + Math.sin(k * Math.PI * 3) * 0.35 * k;
+        ctx.scale(1/s, s);
+      }
       ctx.fillStyle = COLORS[pu.kind] || COLORS.coin;
       ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI*2); ctx.fill();
       ctx.fillStyle = "rgba(255,255,255,0.35)";
@@ -1376,6 +1457,16 @@
     ctx.save();
     ctx.fillStyle = COLORS.pole;
     ctx.fillRect(sx-3, topY, 6, baseY-topY);
+    // the flag itself, banked to the point the pole was climbed to once
+    // grabbed, otherwise waving gently at the top
+    const flagY = poleClimbed ? player.y + player.h*0.4 : topY + 6;
+    const wave = Math.sin(portal.t*3) * 3;
+    ctx.fillStyle = COLORS.poleTop;
+    ctx.beginPath();
+    ctx.moveTo(sx+3, flagY-7);
+    ctx.lineTo(sx+22+wave, flagY);
+    ctx.lineTo(sx+3, flagY+7);
+    ctx.closePath(); ctx.fill();
     ctx.fillStyle = COLORS.poleTop;
     ctx.beginPath(); ctx.arc(sx, topY, 8, 0, Math.PI*2); ctx.fill();
     for (let r=0;r<3;r++){
@@ -1384,6 +1475,48 @@
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.ellipse(sx, topY, 6, rad, 0, 0, Math.PI*2); ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  function drawPipes(){
+    for (const s of enemies){
+      if (s.kind !== "snapper") continue;
+      const sx = s.x - camera.x;
+      const pipeH = TILE*2, pipeY = LEVEL.groundRow*TILE - pipeH;
+      ctx.fillStyle = COLORS.pipeDark;
+      ctx.fillRect(sx-3, pipeY, s.w+6, pipeH);
+      ctx.fillStyle = COLORS.pipe;
+      ctx.fillRect(sx-3, pipeY, s.w+6, TILE*0.4);
+      ctx.fillStyle = COLORS.pipeRim;
+      ctx.fillRect(sx-1, pipeY+2, s.w+2, 4);
+    }
+  }
+
+  function drawHouse(){
+    const sx = LEVEL.house.x*TILE - camera.x;
+    const baseY = LEVEL.groundRow*TILE;
+    const w = TILE*2.2, h = TILE*2;
+    ctx.save();
+    ctx.translate(sx, baseY);
+    // body
+    ctx.fillStyle = COLORS.house;
+    ctx.fillRect(-w/2, -h, w, h);
+    ctx.fillStyle = COLORS.houseDark;
+    ctx.fillRect(-w/2, -h, w, 6);
+    // roof
+    ctx.fillStyle = COLORS.houseRoof;
+    ctx.beginPath();
+    ctx.moveTo(-w/2-8, -h);
+    ctx.lineTo(0, -h-TILE*1.1);
+    ctx.lineTo(w/2+8, -h);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = COLORS.houseRoofDark;
+    ctx.beginPath();
+    ctx.moveTo(0, -h-TILE*1.1); ctx.lineTo(w/2+8, -h); ctx.lineTo(w/2-6, -h); ctx.closePath(); ctx.fill();
+    // door + window
+    ctx.fillStyle = COLORS.houseDoor;
+    ctx.fillRect(-10, -h*0.55, 20, h*0.55);
+    ctx.beginPath(); ctx.arc(0, -h*0.78, 8, 0, Math.PI*2); ctx.fill();
     ctx.restore();
   }
 
@@ -1472,10 +1605,15 @@
   }
 
   function render(){
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(1/PIXEL_SCALE, 1/PIXEL_SCALE);
     ctx.clearRect(0,0,VIEW_W,VIEW_H);
     drawBackground();
     drawTiles();
+    drawStairs();
     drawBlocks();
+    drawPipes();
+    drawHouse();
     drawPole();
     drawPowerups();
     drawCoins();
@@ -1483,6 +1621,11 @@
     drawEmbers();
     drawParticles();
     drawPlayer();
+
+    // Blit the low-res buffer up to the real canvas, nearest-neighbor —
+    // this is the actual "chunky retro pixel" step.
+    screenCtx.clearRect(0,0,VIEW_W,VIEW_H);
+    screenCtx.drawImage(pixelCanvas, 0,0,pixelCanvas.width,pixelCanvas.height, 0,0,VIEW_W,VIEW_H);
   }
 
   /* ============================== [LOOP] ================================== */
@@ -1503,11 +1646,20 @@
       updatePowerups(dt);
       updateEmbers(dt);
       updatePole(dt);
+      updateHouse(dt);
       updateParticles(dt);
       updateCamera(dt);
       if (poleFinishT !== null){
         poleFinishT -= dt;
-        if (poleFinishT <= 0){ poleFinishT = null; finishLevel(); }
+        if (poleFinishT <= 0){
+          poleFinishT = null;
+          // Slide off the pole and hand control back — the house, a
+          // little further on, is what actually finishes the level.
+          levelFinishing = false;
+          player.x = portal.x + TILE*0.6;
+          player.y = LEVEL.groundRow*TILE - player.h;
+          player.vx = 0; player.vy = 0;
+        }
       }
     }
     render();
