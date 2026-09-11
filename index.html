@@ -284,6 +284,7 @@
   const TERMINAL_VELOCITY = 900;
   const COYOTE_TIME = 0.09;            // seconds of grace after leaving ground
   const INVULN_TIME = 1.0;             // seconds of flashing invulnerability
+  const RESPAWN_INPUT_FREEZE = 0.3;    // seconds movement input is ignored after respawn
   const PIT_FALL_LIMIT = ROWS * TILE + 140;
 
   const COLORS = {
@@ -387,6 +388,7 @@
       this.facing = 1;
       this.coyote = 0;
       this.invuln = 0;
+      this.inputFreeze = 0;
       this.animT = 0;
       this.squash = 1;
     }
@@ -394,6 +396,12 @@
     respawn(cp){
       this.x = cp.x; this.y = cp.y; this.vx = 0; this.vy = 0;
       this.invuln = INVULN_TIME;
+      // Briefly ignore movement input after a respawn. Without this, a
+      // direction key held during normal play (the common case) sends the
+      // player straight back off the same pit lip they just fell into —
+      // see the checkpoint-placement fix in updatePlayer() for the other
+      // half of this.
+      this.inputFreeze = RESPAWN_INPUT_FREEZE;
     }
   }
 
@@ -536,7 +544,7 @@
 
   function updatePlayer(dt){
     const p = player;
-    const wantDir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const wantDir = p.inputFreeze > 0 ? 0 : (input.right ? 1 : 0) - (input.left ? 1 : 0);
 
     const accel = p.onGround ? MOVE_ACCEL : AIR_ACCEL;
     if (wantDir !== 0){
@@ -578,11 +586,17 @@
     }
     p.coyote = p.onGround ? COYOTE_TIME : Math.max(0, p.coyote - dt);
 
-    if (p.onGround && !inPit(Math.floor((p.x + p.w/2) / TILE))){
+    // Only bank a checkpoint with a one-tile buffer of solid ground on
+    // both sides, not the instant the player is merely standing somewhere
+    // pit-free. Anchoring right on a pit's lip meant respawning put the
+    // player back exactly where they could walk straight off again.
+    const footTx = Math.floor((p.x + p.w/2) / TILE);
+    if (p.onGround && !inPit(footTx - 1) && !inPit(footTx) && !inPit(footTx + 1)){
       checkpoint = { x: p.x, y: p.y };
     }
 
     p.invuln = Math.max(0, p.invuln - dt);
+    p.inputFreeze = Math.max(0, p.inputFreeze - dt);
     p.animT += dt * (Math.abs(p.vx) > 5 ? 10 : 3);
     p.squash += ((p.onGround ? 1 : (p.vy < 0 ? 1.12 : 0.92)) - p.squash) * Math.min(1, dt*10);
 
