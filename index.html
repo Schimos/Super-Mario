@@ -375,6 +375,41 @@
     pipe: "#3f6e63", pipeDark: "#2a4a42", pipeRim: "#57907f"
   };
 
+  /* ============================== [AUDIO] =================================
+     One-shot sound effects, generated via ElevenLabs (see
+     .github/workflows/generate-sfx.yml) and shipped as static files under
+     assets/sfx/. A fresh Audio() per playSound() call (rather than
+     rewinding one shared instance) lets the same effect overlap itself —
+     e.g. two quick jumps — without cutting off mid-playback. Playback
+     failures (autoplay-blocked before the first user gesture, or a file
+     that hasn't been generated yet) are swallowed on purpose so a missing
+     sound never breaks the game.                                        */
+  const SFX_FILES = {
+    jump: "assets/sfx/jump.mp3",
+    double_jump: "assets/sfx/double_jump.mp3",
+    stomp: "assets/sfx/stomp.mp3",
+    coin: "assets/sfx/coin.mp3",
+    grow: "assets/sfx/grow.mp3",
+    shrink: "assets/sfx/shrink.mp3",
+    hurt: "assets/sfx/hurt.mp3",
+    gameover: "assets/sfx/gameover.mp3",
+    fire: "assets/sfx/fire.mp3",
+    glowspark: "assets/sfx/glowspark.mp3",
+    block_bump: "assets/sfx/block_bump.mp3",
+    extra_life: "assets/sfx/extra_life.mp3",
+    victory: "assets/sfx/victory.mp3",
+    title_open: "assets/sfx/title_open.mp3",
+    select: "assets/sfx/select.mp3",
+  };
+  function playSound(id, volume = 0.7){
+    const src = SFX_FILES[id];
+    if (!src) return Promise.resolve();
+    const audio = new Audio(src);
+    audio.volume = volume;
+    const p = audio.play();
+    return p && p.catch ? p.catch(() => {}) : Promise.resolve();
+  }
+
   /* ============================== [LEVEL] ================================
      Data-driven: pits and platforms describe *tile ranges*, everything
      else (coins/enemies/goal/start) are tile coordinates. isSolidTile()
@@ -593,6 +628,7 @@
       player.invuln = HIT_REVERT_INVULN;
       player.vx = knockDir * 220;
       player.vy = -300;
+      playSound("shrink");
     } else {
       player.vx = knockDir * 220;
       player.vy = -300;
@@ -602,15 +638,17 @@
 
   function awardStompScore(){
     const idx = player.stompChain;
+    playSound("stomp");
     if (idx < STOMP_CHAIN_SCORES.length) score += STOMP_CHAIN_SCORES[idx];
-    else lives += 1;
+    else { lives += 1; playSound("extra_life"); }
     player.stompChain++;
     updateHud();
   }
   function awardShellChainScore(shell){
     const idx = shell.shellChainIndex || 0;
+    playSound("stomp");
     if (idx < STOMP_CHAIN_SCORES.length) score += STOMP_CHAIN_SCORES[idx];
-    else lives += 1;
+    else { lives += 1; playSound("extra_life"); }
     shell.shellChainIndex = idx + 1;
     updateHud();
   }
@@ -717,6 +755,7 @@
   }
 
   function startGame(){
+    playSound("select");
     buildLevel();
     state = STATE.PLAYING;
     show("screen-start", false); show("screen-gameover", false); show("screen-win", false);
@@ -739,8 +778,10 @@
       state = STATE.DEAD;
       document.getElementById("go-score").textContent = score;
       show("screen-gameover", true);
+      playSound("gameover");
     } else {
       player.respawn(checkpoint);
+      playSound("hurt");
     }
   }
 
@@ -750,6 +791,7 @@
     document.getElementById("win-time").textContent = elapsed.toFixed(1) + "s";
     document.getElementById("win-lives").textContent = lives;
     show("screen-win", true);
+    playSound("victory");
   }
 
   /* ============================== [PHYSICS] =============================== */
@@ -852,9 +894,11 @@
         p.vy = JUMP_VELOCITY;
         p.onGround = false;
         p.coyote = 0;
+        playSound("jump");
       } else if (p.airJumpsLeft > 0){
         p.vy = AIR_JUMP_VELOCITY;
         p.airJumpsLeft--;
+        playSound("double_jump");
       }
     }
     if (!input.jumpHeld && p.vy < JUMP_VELOCITY * JUMP_CUT_MULT){
@@ -864,6 +908,7 @@
 
     if (input.fireEdge && p.form === "ember" && embers.filter(e => e.alive).length < EMBER_MAX_ONSCREEN){
       embers.push({ x: p.x + p.w/2, y: p.y + p.h*0.4, vx: p.facing * EMBER_SPEED, vy: 0, life: EMBER_LIFETIME, alive: true });
+      playSound("fire");
     }
     input.fireEdge = false;
 
@@ -927,6 +972,7 @@
 
   function hitBlock(b){
     b.bumpT = 0.15;
+    playSound("block_bump");
     if (b.kind === "brick"){
       if (player.form !== "small"){
         b.broken = true;
@@ -947,7 +993,8 @@
     else if (b.contains === "emberbud") powerups.push({ x: px, y: py, kind: "emberbud", taken: false, vy: -260, vx: rollDir*60, popT: 0.4 });
     else if (b.contains === "coins"){
       score += COIN_SCORE; coinCount++;
-      if (coinCount % COINS_PER_LIFE === 0) lives++;
+      playSound("coin");
+      if (coinCount % COINS_PER_LIFE === 0){ lives++; playSound("extra_life"); }
       updateHud();
       spawnBurst(px, py, COLORS.coin);
     }
@@ -1096,6 +1143,7 @@
           e.alive = false; e.deathT = 0;
           spawnBurst(e.x + e.w/2, e.y + e.h/2, COLORS.enemySpike);
           score += EMBER_KILL_SCORE; updateHud();
+          playSound("stomp");
           em.alive = false;
         }
       }
@@ -1127,11 +1175,13 @@
       if (Math.abs(dx) < 20 && Math.abs(dy) < 24){
         pu.taken = true;
         if (pu.kind === "dewberry"){
-          if (player.form === "small") setPlayerForm("big");
+          if (player.form === "small"){ setPlayerForm("big"); playSound("grow"); }
         } else if (pu.kind === "emberbud"){
           setPlayerForm("ember");
+          playSound("grow");
         } else if (pu.kind === "glowspark"){
           player.glowsparkT = GLOWSPARK_DURATION;
+          playSound("glowspark");
         }
         score += POWERUP_SCORE; updateHud();
         spawnBurst(pu.x, pu.y, COLORS[pu.kind] || COLORS.coin);
@@ -1162,7 +1212,8 @@
       if (Math.abs(dx) < 20 && Math.abs(dy) < 20){
         c.taken = true;
         score += COIN_SCORE; coinCount++;
-        if (coinCount % COINS_PER_LIFE === 0) lives++;
+        playSound("coin");
+        if (coinCount % COINS_PER_LIFE === 0){ lives++; playSound("extra_life"); }
         updateHud();
         spawnBurst(c.x, c.y, COLORS.coin);
       }
@@ -1705,6 +1756,20 @@
   // draw one idle frame behind the start screen
   buildLevel();
   render();
+
+  // Title-screen "power on" chime. Browsers block audio before any user
+  // gesture, so this attempt on load will typically be silently rejected —
+  // the fallback listeners catch the player's very first click/keypress
+  // (which, on the title screen, is often the Start press itself) and
+  // retry once.
+  let titleOpenPlayed = false;
+  function tryPlayTitleOpen(){
+    if (titleOpenPlayed) return;
+    playSound("title_open").then(() => { titleOpenPlayed = true; });
+  }
+  tryPlayTitleOpen();
+  window.addEventListener("pointerdown", tryPlayTitleOpen, { once:true, capture:true });
+  window.addEventListener("keydown", tryPlayTitleOpen, { once:true, capture:true });
 })();
 </script>
 </body>
