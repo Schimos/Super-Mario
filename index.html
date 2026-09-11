@@ -99,6 +99,24 @@
     transition: opacity 0.25s ease;
   }
   .overlay.hidden{ display:none; }
+
+  /* ---- Start screen (arcade marquee artwork) ---- */
+  #screen-start{
+    background: #0d0a18 url('assets/title-screen.jpg') center/cover no-repeat;
+    padding: 0;
+  }
+  #screen-start .btn-hit{
+    position:absolute;
+    left:32%; right:32%; top:81%; bottom:3.5%;
+    background:transparent; border:none; box-shadow:none;
+    border-radius: 10%/28%;
+    padding:0; margin:0; cursor:pointer;
+  }
+  #screen-start .btn-hit:hover{ background: rgba(255,209,102,0.10); }
+  #screen-start .btn-hit:active{ background: rgba(255,209,102,0.2); }
+  #screen-start .btn-hit:focus-visible{
+    outline: 3px solid var(--ember-coral); outline-offset: 3px;
+  }
   .overlay h1{
     font-size: clamp(16px, 4.2vw, 28px);
     color: var(--firefly-gold);
@@ -237,15 +255,9 @@
 
     <!-- START -->
     <div class="overlay" id="screen-start">
-      <h1 class="pixel">MOSSY HOLLOW</h1>
-      <p class="sub">Guide Sprig the moss-sprite through the hollow — hop on spikeshrooms from above, gather dewdrops, and reach the glowing portal.</p>
-      <button class="btn" id="btn-start">PRESS START</button>
-      <div class="keys-hint">
-        <span><kbd>←</kbd><kbd>→</kbd> or <kbd>A</kbd><kbd>D</kbd> move</span>
-        <span><kbd>Space</kbd> / <kbd>↑</kbd> / <kbd>W</kbd> jump</span>
-        <span><kbd>Shift</kbd> hold to run</span>
-        <span><kbd>X</kbd> fire ember (Ember Sprig only)</span>
-      </div>
+      <h1 class="pixel sr-only">Mossy Hollow</h1>
+      <p class="sr-only">Guide Sprig the moss-sprite through the hollow — hop on spikeshrooms from above, gather dewdrops, and reach the glowing portal. Move with the arrow keys or A/D, jump with Space, hold Shift to run.</p>
+      <button class="btn-hit" id="btn-start" aria-label="Press Start to play Mossy Hollow"></button>
     </div>
 
     <!-- GAME OVER -->
